@@ -52,3 +52,24 @@ for curve_name in combined:
     ts = curve.get_data(data_from=start_date, data_to=end_date)
     s = ts.to_pandas()
     pandas_series[curve_name] = s
+
+# Combine all series into a single DataFrame
+combined_df = pd.DataFrame(pandas_series)
+
+# Drop rows with any NaN values
+cleaned_df = combined_df.dropna()
+
+# Convert the cleaned DataFrame back to a dictionary of series
+pandas_series = {col: cleaned_df[col] for col in cleaned_df}
+
+# Reset index and convert datetime to numerical features
+for col in pandas_series:
+    df = pandas_series[col].reset_index()
+    df['year'] = df['index'].dt.year
+    df['month'] = df['index'].dt.month
+    df['day'] = df['index'].dt.day
+    df['hour'] = df['index'].dt.hour
+    df['minute'] = df['index'].dt.minute
+    df.drop(columns=['index'], inplace=True)
+    pandas_series[col] = df
+
