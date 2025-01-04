@@ -62,6 +62,12 @@ cleaned_df = combined_df.dropna()
 # Convert the cleaned DataFrame back to a dictionary of series
 pandas_series = {col: cleaned_df[col] for col in cleaned_df}
 
+# Upsample series with 1-hour frequency to 15-minute intervals
+for col in pandas_series:
+    print(col, " h " in col)
+    if " h " in col:
+        pandas_series[col] = pandas_series[col].resample('15T').ffill()
+
 # Reset index and convert datetime to numerical features
 for col in pandas_series:
     df = pandas_series[col].reset_index()
