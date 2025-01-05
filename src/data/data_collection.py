@@ -42,40 +42,48 @@ exchange_curves = [
 ]
 
 combined = basic_curves + exchange_curves
-
 start_date = pd.Timestamp("2021-01-01")
 end_date = pd.Timestamp.today()
 
-pandas_series = {}
-for curve_name in combined:
-    curve = session.get_curve(name=curve_name)
-    ts = curve.get_data(data_from=start_date, data_to=end_date)
-    s = ts.to_pandas()
-    pandas_series[curve_name] = s
+def get_data(curve_names: list, session: volue_insight_timeseries.Session,  start_date: pd.Timestamp, end_date: pd.Timestamp):
 
-# Combine all series into a single DataFrame
-combined_df = pd.DataFrame(pandas_series)
+    pandas_series = {}
+    for curve_name in curve_names:
+        curve = session.get_curve(name=curve_name)
+        ts = curve.get_data(data_from=start_date, data_to=end_date)
+        s = ts.to_pandas()
+        pandas_series[curve_name] = s
 
-# Drop rows with any NaN values
-cleaned_df = combined_df.dropna()
+    # Combine all series into a single DataFrame
+    combined_df = pd.DataFrame(pandas_series)
 
-# Convert the cleaned DataFrame back to a dictionary of series
-pandas_series = {col: cleaned_df[col] for col in cleaned_df}
+    # Drop rows with any NaN values
+    cleaned_df = combined_df.dropna()
 
-# Upsample series with 1-hour frequency to 15-minute intervals
-for col in pandas_series:
-    print(col, " h " in col)
-    if " h " in col:
-        pandas_series[col] = pandas_series[col].resample('15T').ffill()
+    # Convert the cleaned DataFrame back to a dictionary of series
+    pandas_series = {col: cleaned_df[col] for col in cleaned_df}
 
-# Reset index and convert datetime to numerical features
-for col in pandas_series:
-    df = pandas_series[col].reset_index()
-    df['year'] = df['index'].dt.year
-    df['month'] = df['index'].dt.month
-    df['day'] = df['index'].dt.day
-    df['hour'] = df['index'].dt.hour
-    df['minute'] = df['index'].dt.minute
-    df.drop(columns=['index'], inplace=True)
-    pandas_series[col] = df
+    # Upsample series with 1-hour frequency to 15-minute intervals
+    for col in pandas_series:
+        if " h " in col:
+            pandas_series[col] = pandas_series[col].resample('15T').ffill()
+
+    # Reset index and convert datetime to numerical features
+    for col in pandas_series:
+        df = pandas_series[col].reset_index()
+        df['year'] = df['index'].dt.year
+        df['month'] = df['index'].dt.month
+        df['day'] = df['index'].dt.day
+        df['hour'] = df['index'].dt.hour
+        df['minute'] = df['index'].dt.minute
+        df.drop(columns=['index'], inplace=True)
+        pandas_series[col] = df
+    
+    return pandas_series
+
+data = get_data(combined, session, start_date, end_date)
+targets = get_data(["pri de imb up afrr €/mwh cet min15 a",
+                   "pri de imb down afrr €/mwh cet min15 a"], 
+                   session, start_date, end_date)
+
 
