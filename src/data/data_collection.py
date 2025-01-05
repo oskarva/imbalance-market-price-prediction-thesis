@@ -66,7 +66,7 @@ def get_data(curve_names: list, session: volue_insight_timeseries.Session,  star
     # Upsample series with 1-hour frequency to 15-minute intervals
     for col in pandas_series:
         if " h " in col:
-            pandas_series[col] = pandas_series[col].resample('15T').ffill()
+            pandas_series[col] = pandas_series[col].resample('15T').ffill() #TODO: Verify that this functions correctly even though the frequency is not recognized as hourly by pandas
 
     # Reset index and convert datetime to numerical features
     for col in pandas_series:
