@@ -1,5 +1,7 @@
 # Python virtual environments
 venv/
+myenv/
+.myenv/
 .venv/
 env/
 .env/

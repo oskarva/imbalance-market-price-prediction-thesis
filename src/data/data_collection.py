@@ -22,7 +22,7 @@ basic_curves = [
 "pri de spot €/mwh cet h a",
 "rdl de mwh/h cet min15 a",
 "pri de imb stlmt €/mwh cet min15 a",
-]
+] #TODO: Add net transfer capacity curves
 
 exchange_curves = [
     "exc de>se4 com mw cet h a",
@@ -44,6 +44,7 @@ exchange_curves = [
 combined = basic_curves + exchange_curves
 start_date = pd.Timestamp("2021-01-01")
 end_date = pd.Timestamp.today()
+
 
 def get_data(curve_names: list, session: volue_insight_timeseries.Session,  start_date: pd.Timestamp, end_date: pd.Timestamp):
 
@@ -81,6 +82,7 @@ def get_data(curve_names: list, session: volue_insight_timeseries.Session,  star
     
     return pandas_series
 
+#TODO: Should honestly run the test set through get_data simoltaneously to ensure that dropna() drops the same rows in both test and train
 data = get_data(combined, session, start_date, end_date)
 targets = get_data(["pri de imb up afrr €/mwh cet min15 a",
                    "pri de imb down afrr €/mwh cet min15 a"], 
