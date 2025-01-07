@@ -15,3 +15,6 @@ env.yaml
 # Pipenv
 Pipfile
 Pipfile.lock
+
+# Pycache
+__pycache__/

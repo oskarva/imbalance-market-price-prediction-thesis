@@ -82,9 +82,10 @@ def get_data(curve_names: list, session: volue_insight_timeseries.Session,  star
     
     return pandas_series
 
-#TODO: Should honestly run the test set through get_data simoltaneously to ensure that dropna() drops the same rows in both test and train
-data = get_data(combined, session, start_date, end_date)
-targets = get_data(["pri de imb up afrr €/mwh cet min15 a",
+if __name__ == "__main__":
+    #TODO: Should honestly run the test set through get_data simoltaneously to ensure that dropna() drops the same rows in both test and train
+    data = get_data(combined, session, start_date, end_date)
+    targets = get_data(["pri de imb up afrr €/mwh cet min15 a",
                    "pri de imb down afrr €/mwh cet min15 a"], 
                    session, start_date, end_date)
 
