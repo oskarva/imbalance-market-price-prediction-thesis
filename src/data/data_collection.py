@@ -22,7 +22,7 @@ basic_curves = [
 "pri de spot €/mwh cet h a",
 "rdl de mwh/h cet min15 a",
 "pri de imb stlmt €/mwh cet min15 a",
-] #TODO: Add net transfer capacity curves
+] 
 
 exchange_curves = [
     "exc de>se4 com mw cet h a",
@@ -40,6 +40,8 @@ exchange_curves = [
     "exc de>no com mw cet h a",
     "exc de>dk com mw cet h a"
 ]
+
+#TODO: Add net transfer capacity curves?
 
 combined = basic_curves + exchange_curves
 start_date = pd.Timestamp("2021-01-01")
@@ -67,7 +69,7 @@ def get_data(curve_names: list, session: volue_insight_timeseries.Session,  star
     # Upsample series with 1-hour frequency to 15-minute intervals
     for col in pandas_series:
         if " h " in col:
-            pandas_series[col] = pandas_series[col].resample('15T').ffill() #TODO: Verify that this functions correctly even though the frequency is not recognized as hourly by pandas
+            pandas_series[col] = pandas_series[col].resample('15T').ffill() 
 
     # Reset index and convert datetime to numerical features
     for col in pandas_series:
