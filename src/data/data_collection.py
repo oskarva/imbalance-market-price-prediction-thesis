@@ -48,7 +48,7 @@ start_date = pd.Timestamp("2021-01-01")
 end_date = pd.Timestamp.today()
 def get_data(X_curve_names: list, y_curve_names: list, session: volue_insight_timeseries.Session,  start_date: pd.Timestamp, end_date: pd.Timestamp):
     combined_curves = X_curve_names + y_curve_names
-    combined_data = _get_data(combined_curves, session, start_date, end_date)
+    combined_data = _get_data(combined_curves, y_curve_names, session, start_date, end_date)
 
     # Now, split the cleaned combined_data into X and y:
     X = {col: combined_data[col] for col in X_curve_names if col in combined_data}
@@ -56,7 +56,7 @@ def get_data(X_curve_names: list, y_curve_names: list, session: volue_insight_ti
 
     return X, y
 
-def _get_data(curve_names: list, session: volue_insight_timeseries.Session,  start_date: pd.Timestamp, end_date: pd.Timestamp):
+def _get_data(curve_names: list, target_columns:list, session: volue_insight_timeseries.Session,  start_date: pd.Timestamp, end_date: pd.Timestamp):
 
     pandas_series = {}
     for curve_name in curve_names:
@@ -65,39 +65,41 @@ def _get_data(curve_names: list, session: volue_insight_timeseries.Session,  sta
         s = ts.to_pandas()
         pandas_series[curve_name] = s
 
-    # Combine all series into a single DataFrame
+    # Upsample series with 1-hour frequency to 15-minute intervals
+    for col in pandas_series:
+        if " h " in col:
+            pandas_series[col] = pandas_series[col].resample('15min').ffill() 
+
+    # Update combined_df with the resampled data:
     combined_df = pd.DataFrame(pandas_series)
 
-    # Drop columns with more than a certain threshold of NaN values
-    # For example, drop columns with more than 50% NaN values
+    # Define threshold
     threshold = 0.4
-    cols_to_drop = combined_df.columns[combined_df.isna().mean() > threshold]
+    # Only consider dropping columns that are not target columns.
+    non_target_columns = [col for col in combined_df.columns if col not in target_columns]
+    cols_to_drop = combined_df[non_target_columns].columns[combined_df[non_target_columns].isna().mean() > threshold]
+    
+    # Drop only from non-target columns:
     combined_df = combined_df.drop(columns=cols_to_drop)
     print(f"Dropped columns: {cols_to_drop}")
+
 
     # Drop rows with any NaN values
     cleaned_df = combined_df.dropna()
 
-    # Convert the cleaned DataFrame back to a dictionary of series
-    pandas_series = {col: cleaned_df[col] for col in cleaned_df}
-
-    # Upsample series with 1-hour frequency to 15-minute intervals
-    for col in pandas_series:
-        if " h " in col:
-            pandas_series[col] = pandas_series[col].resample('15T').ffill() 
-
-    # Reset index and convert datetime to numerical features
-    for col in pandas_series:
-        df = pandas_series[col].reset_index()
+    # Reset index and convert datetime to numerical features using cleaned_df
+    final_series = {}
+    for col in cleaned_df.columns:
+        df = cleaned_df[col].reset_index()
         df['year'] = df['index'].dt.year
         df['month'] = df['index'].dt.month
         df['day'] = df['index'].dt.day
         df['hour'] = df['index'].dt.hour
         df['minute'] = df['index'].dt.minute
         df.drop(columns=['index'], inplace=True)
-        pandas_series[col] = df
-    
-    return pandas_series
+        final_series[col] = df
+
+    return final_series
 
 if __name__ == "__main__":
     data = get_data(combined, 
