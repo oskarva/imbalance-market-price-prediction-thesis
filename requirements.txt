@@ -1,3 +1,4 @@
 volue_insight_timeseries==1.2.1
 pandas
 matplotlib
+numpy
