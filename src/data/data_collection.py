@@ -3,7 +3,7 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
-session = volue_insight_timeseries.Session(config_file=os.environ.get("WAPI_INI"))
+session = volue_insight_timeseries.Session(config_file=os.environ.get("WAPI_CONFIG"))
 
 basic_curves = [
 "pri de imb up mfrr €/mwh cet min15 a",
@@ -46,9 +46,17 @@ exchange_curves = [
 combined = basic_curves + exchange_curves
 start_date = pd.Timestamp("2021-01-01")
 end_date = pd.Timestamp.today()
+def get_data(X_curve_names: list, y_curve_names: list, session: volue_insight_timeseries.Session,  start_date: pd.Timestamp, end_date: pd.Timestamp):
+    combined_curves = X_curve_names + y_curve_names
+    combined_data = _get_data(combined_curves, session, start_date, end_date)
 
+    # Now, split the cleaned combined_data into X and y:
+    X = {col: combined_data[col] for col in X_curve_names if col in combined_data}
+    y = {col: combined_data[col] for col in y_curve_names if col in combined_data}
 
-def get_data(curve_names: list, session: volue_insight_timeseries.Session,  start_date: pd.Timestamp, end_date: pd.Timestamp):
+    return X, y
+
+def _get_data(curve_names: list, session: volue_insight_timeseries.Session,  start_date: pd.Timestamp, end_date: pd.Timestamp):
 
     pandas_series = {}
     for curve_name in curve_names:
@@ -59,6 +67,13 @@ def get_data(curve_names: list, session: volue_insight_timeseries.Session,  star
 
     # Combine all series into a single DataFrame
     combined_df = pd.DataFrame(pandas_series)
+
+    # Drop columns with more than a certain threshold of NaN values
+    # For example, drop columns with more than 50% NaN values
+    threshold = 0.4
+    cols_to_drop = combined_df.columns[combined_df.isna().mean() > threshold]
+    combined_df = combined_df.drop(columns=cols_to_drop)
+    print(f"Dropped columns: {cols_to_drop}")
 
     # Drop rows with any NaN values
     cleaned_df = combined_df.dropna()
@@ -85,10 +100,10 @@ def get_data(curve_names: list, session: volue_insight_timeseries.Session,  star
     return pandas_series
 
 if __name__ == "__main__":
-    #TODO: Should honestly run the test set through get_data simoltaneously to ensure that dropna() drops the same rows in both test and train
-    data = get_data(combined, session, start_date, end_date)
-    targets = get_data(["pri de imb up afrr €/mwh cet min15 a",
-                   "pri de imb down afrr €/mwh cet min15 a"], 
-                   session, start_date, end_date)
+    data = get_data(combined, 
+                    ["pri de imb up afrr €/mwh cet min15 a", "pri de imb down afrr €/mwh cet min15 a"],
+                     session, 
+                     start_date, 
+                     end_date)
 
 

@@ -3,6 +3,8 @@ from unittest.mock import MagicMock
 import pandas as pd
 from data_collection import get_data
 
+#TODO: Surely I need to make actual sessions to truly test this?
+
 class TestGetData(unittest.TestCase):
 
     def setUp(self):
