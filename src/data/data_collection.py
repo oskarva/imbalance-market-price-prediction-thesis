@@ -32,7 +32,7 @@ def get_data(X_curve_names: list, y_curve_names: list,
     X = cleaned_df[X_columns].to_numpy()
     y = cleaned_df[y_columns].to_numpy()
 
-    return X, y
+    return X, y, X_columns, y_columns
 
 
 def _get_data(curve_names: list, target_columns: list, 
