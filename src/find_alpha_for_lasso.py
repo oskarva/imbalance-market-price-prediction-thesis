@@ -23,7 +23,9 @@ alphas = np.logspace(-4, 2, 100)  # 0.0001 to 100
 
 # Loading the data
 X_train, y_train, X_col, _ = get_data(X_curve_names, y_curve_names, session, start_date, end_date)
-
+# Example: Sum all cross-border exchange features
+#X_train['total_exports'] = X_train.filter(regex='exc de>').sum(axis=1)
+#X_train['spot_price_pct_change'] = X_train['pri de spot €/mwh cet h a'].pct_change()
 # Step 1: Standardize the data (center & scale)
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train)  # Normalize and center
@@ -42,6 +44,24 @@ print(f"Optimal coefficient: {lasso_cv.coef_}")
 
 for i, col in enumerate(X_col):
     print(f"{col:<30} {lasso_cv.coef_[i]}")
+
+# Convert X_col to a NumPy array
+X_col_array = np.array(X_col)
+
+# Get Lasso-selected features
+selected_features = X_col_array[lasso_cv.coef_ != 0]
+
+# Use in non-linear model
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+gb = GradientBoostingRegressor().fit(X_train[:, lasso_cv.coef_ != 0], y_train)
+
+# Compare to using all features
+full_model = GradientBoostingRegressor().fit(X_train, y_train)
+print(f"GB R² (Lasso features): {gb.score(X_train[:, lasso_cv.coef_ != 0], y_train):.3f}")
+print(f"GB R² (All features): {full_model.score(X_train, y_train):.3f}")
+
+rf = RandomForestRegressor().fit(X_train, y_train)
+pd.DataFrame({'Feature': X_col, 'RF Importance': rf.feature_importances_})
 
 from sklearn.linear_model import LinearRegression
 

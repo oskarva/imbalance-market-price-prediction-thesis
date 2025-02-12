@@ -13,18 +13,18 @@ def get_data(X_curve_names: list, y_curve_names: list,
     
     # Optionally, add time features from the index. For example:
     cleaned_df = cleaned_df.copy()  # work on a copy to avoid SettingWithCopy warnings
-    cleaned_df["year"] = cleaned_df.index.year
-    cleaned_df["month"] = cleaned_df.index.month
-    cleaned_df["day"] = cleaned_df.index.day
-    cleaned_df["hour"] = cleaned_df.index.hour
-    cleaned_df["minute"] = cleaned_df.index.minute
+    #cleaned_df["year"] = cleaned_df.index.year
+    #cleaned_df["month"] = cleaned_df.index.month
+    #cleaned_df["day"] = cleaned_df.index.day
+    #cleaned_df["hour"] = cleaned_df.index.hour
+    #cleaned_df["minute"] = cleaned_df.index.minute
 
     # If you want the time features as part of X, append them:
     # (Otherwise, you can remove them from X by not including the names below.)
-    time_features = ["year", "month", "day", "hour", "minute"]
+    #time_features = ["year", "month", "day", "hour", "minute"]
 
     # Define X and y columns. For X, you can decide whether to include the time features.
-    X_columns = [col for col in X_curve_names if col in cleaned_df.columns] + time_features
+    X_columns = [col for col in X_curve_names if col in cleaned_df.columns]# + time_features
     y_columns = [col for col in y_curve_names if col in cleaned_df.columns]
 
     # Convert to numpy arrays.
