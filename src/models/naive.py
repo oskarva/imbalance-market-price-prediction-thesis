@@ -1,5 +1,5 @@
 import pandas as pd
-from model_interface import ModelInterface
+from .model_interface import ModelInterface
 
 class Naive_Last_Known_Activation_Price(ModelInterface):
 
