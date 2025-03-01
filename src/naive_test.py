@@ -88,23 +88,17 @@ final_rmse = np.sqrt(mean_squared_error(true_values, predictions))
 
 print("Final R2:", final_r2)
 print("Final RMSE:", final_rmse)
+
 import matplotlib.pyplot as plt
 import pandas as pd
 
-# Assuming:
-# - 'y_test' is a pandas Series with a datetime index containing the true prices.
-# - 'predictions' is a list or numpy array containing your predicted values.
-#
-# If your predictions correspond exactly to the first len(predictions) entries of y_test,
-# you can construct a new Series for predictions using the corresponding index.
-
 # Create a predictions Series using the same index as y_test.
 pred_series = pd.Series(predictions, index=y_test.index[:len(predictions)])
-
-# Optionally, extract the corresponding true values.
 true_series = y_test.iloc[:len(predictions)]
 
-# Plotting the true prices and predictions
+# ---------------------------
+# Plot 1: True vs Predicted Prices
+# ---------------------------
 plt.figure(figsize=(12, 6))
 plt.plot(true_series.index, true_series, label='True Prices', color='blue')
 plt.plot(pred_series.index, pred_series, label='Predicted Prices', color='red', linestyle='--')
@@ -116,3 +110,28 @@ plt.grid(True)
 plt.tight_layout()
 plt.show()
 
+# ---------------------------
+# Plot 2: Residual Histogram
+# ---------------------------
+errors = true_series.values - pred_series.values
+plt.figure(figsize=(10, 5))
+plt.hist(errors, bins=30, edgecolor='black', alpha=0.7)
+plt.xlabel("Forecast Error (True - Predicted)")
+plt.ylabel("Frequency")
+plt.title("Histogram of Forecast Errors")
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# ---------------------------
+# Plot 3: Absolute Error Over Time
+# ---------------------------
+absolute_errors = np.abs(errors)
+plt.figure(figsize=(12, 6))
+plt.plot(true_series.index, absolute_errors, marker='o', linestyle='-', color='purple')
+plt.xlabel("Time")
+plt.ylabel("Absolute Error")
+plt.title("Absolute Forecast Error Over Time")
+plt.grid(True)
+plt.tight_layout()
+plt.show()
