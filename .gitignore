@@ -19,5 +19,4 @@ Pipfile.lock
 # Pycache
 __pycache__/
 
-# Results
-results/
+
