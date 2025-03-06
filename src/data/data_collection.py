@@ -1,9 +1,14 @@
 import volue_insight_timeseries 
 import pandas as pd
+from feature_engineering import *
 
 def get_data(X_curve_names: list, y_curve_names: list, 
              session: volue_insight_timeseries.Session,  
-             start_date: pd.Timestamp, end_date: pd.Timestamp) -> tuple:
+             start_date: pd.Timestamp, end_date: pd.Timestamp,
+             add_time=False,
+             add_lag=False,
+             add_rolling=False,
+             ) -> tuple:
     """
     Returns a tuple (X, y) as NumPy ndarrays.
     X and y are obtained from the cleaned data based on the provided curve names.
@@ -13,15 +18,6 @@ def get_data(X_curve_names: list, y_curve_names: list,
     
     # Optionally, add time features from the index. For example:
     cleaned_df = cleaned_df.copy()  # work on a copy to avoid SettingWithCopy warnings
-    #cleaned_df["year"] = cleaned_df.index.year
-    #cleaned_df["month"] = cleaned_df.index.month
-    #cleaned_df["day"] = cleaned_df.index.day
-    #cleaned_df["hour"] = cleaned_df.index.hour
-    #cleaned_df["minute"] = cleaned_df.index.minute
-
-    # If you want the time features as part of X, append them:
-    # (Otherwise, you can remove them from X by not including the names below.)
-    #time_features = ["year", "month", "day", "hour", "minute"]
 
     # Define X and y columns. For X, you can decide whether to include the time features.
     X_columns = [col for col in X_curve_names if col in cleaned_df.columns]# + time_features
@@ -29,7 +25,19 @@ def get_data(X_curve_names: list, y_curve_names: list,
 
     # Convert to numpy arrays.
     # (The rows are aligned since they come from the same cleaned_df.)
-    X = cleaned_df[X_columns].to_numpy()
+    X = cleaned_df[X_columns]
+    if add_time:
+        X = add_time_features(X)
+    if add_lag:
+        X = create_lag_features(X, columns=combined_curves, lags=[32])
+    if add_rolling:
+        X = create_rolling_features(X, columns=combined_curves)
+    
+    if add_lag:
+        X = impute_missing_values(X, method="drop")
+
+
+    X = X.to_numpy()
     y = cleaned_df[y_columns].to_numpy()
 
     return X, y, X_columns, y_columns
@@ -65,7 +73,7 @@ def _get_data(curve_names: list, target_columns: list,
         combined_df[non_target_columns].isna().mean() > threshold
     ]
     
-    # Drop only from non-target columns
+    # Drop only non-target columns
     combined_df = combined_df.drop(columns=cols_to_drop)
     print(f"Dropped columns: {cols_to_drop}")
 
