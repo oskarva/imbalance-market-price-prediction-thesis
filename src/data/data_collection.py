@@ -1,46 +1,63 @@
 import volue_insight_timeseries 
 import pandas as pd
-from feature_engineering import *
+from .feature_engineering import *
 
-def get_data(X_curve_names: list, y_curve_names: list, 
-             session: volue_insight_timeseries.Session,  
-             start_date: pd.Timestamp, end_date: pd.Timestamp,
-             add_time=False,
-             add_lag=False,
-             add_rolling=False,
-             ) -> tuple:
-    """
-    Returns a tuple (X, y) as NumPy ndarrays.
-    X and y are obtained from the cleaned data based on the provided curve names.
-    """
+def get_data(X_curve_names, y_curve_names, session, start_date, end_date,
+             add_time=False, add_lag=False, add_rolling=False):
+    # Get data from both X curves and y curves
     combined_curves = X_curve_names + y_curve_names
     cleaned_df = _get_data(combined_curves, y_curve_names, session, start_date, end_date)
     
-    # Optionally, add time features from the index. For example:
-    cleaned_df = cleaned_df.copy()  # work on a copy to avoid SettingWithCopy warnings
-
-    # Define X and y columns. For X, you can decide whether to include the time features.
-    X_columns = [col for col in X_curve_names if col in cleaned_df.columns]# + time_features
+    # Define columns
+    X_columns = [col for col in X_curve_names if col in cleaned_df.columns]
     y_columns = [col for col in y_curve_names if col in cleaned_df.columns]
-
-    # Convert to numpy arrays.
-    # (The rows are aligned since they come from the same cleaned_df.)
-    X = cleaned_df[X_columns]
+    
+    # For future predictions, we need a copy of the complete dataset with all columns
+    full_df = cleaned_df.copy()
+    
+    # Extract X from the DataFrame for feature engineering
+    X_df = cleaned_df[X_columns].copy()
+    
+    # Apply transformations to X_df
     if add_time:
-        X = add_time_features(X)
+        X_df = add_time_features(X_df)
+    
+    # KEY CHANGE: Create lag features for BOTH X variables AND target variables
     if add_lag:
-        X = create_lag_features(X, columns=combined_curves, lags=[32])
+        # Create lag features for X columns
+        X_df = create_lag_features(X_df, columns=X_columns, lags=[32])
+        
+        # IMPORTANT: Add lagged target variables to X_df
+        for y_col in y_columns:
+            lagged_target = create_lag_features(
+                full_df[[y_col]], columns=[y_col], lags=[32]
+            )
+            # Rename to avoid confusion with the actual target
+            lagged_target.columns = [f'{y_col}_target_lag_{lag}' for lag in [32]]
+            
+            # Join to X_df
+            X_df = X_df.join(lagged_target)
+    
     if add_rolling:
-        X = create_rolling_features(X, columns=combined_curves)
+        X_df = create_rolling_features(X_df, columns=X_columns)
     
     if add_lag:
-        X = impute_missing_values(X, method="drop")
-
-
-    X = X.to_numpy()
-    y = cleaned_df[y_columns].to_numpy()
-
-    return X, y, X_columns, y_columns
+        X_df = impute_missing_values(X_df, method="drop")
+    
+    # Get valid indices after transformations
+    valid_indices = X_df.index
+    
+    # Extract y using only the valid indices
+    y_df = cleaned_df.loc[valid_indices, y_columns]
+    
+    # Convert to numpy arrays
+    X = X_df.to_numpy()
+    y = y_df.to_numpy()
+    
+    # Make sure they match
+    assert len(X) == len(y), f"X and y lengths don't match: {len(X)} vs {len(y)}"
+    
+    return X, y, list(X_df.columns), list(y_df.columns)
 
 
 def _get_data(curve_names: list, target_columns: list, 

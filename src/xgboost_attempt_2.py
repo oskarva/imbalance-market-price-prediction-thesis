@@ -33,7 +33,7 @@ target_curve = curve_collections["de"]["mfrr"][0]  # e.g. "mfrr_up_price" or sim
 
 session = volue_insight_timeseries.Session(config_file=os.environ.get("WAPI_CONFIG"))
 
-X, y, X_columns, y_columns = get_data(X_curve_names, target_curve,
+X, y, X_columns, y_columns = get_data(X_curve_names, [target_curve],
                                       session,
                                       start_date, end_date,
                                       add_time=False, 
@@ -42,3 +42,8 @@ X, y, X_columns, y_columns = get_data(X_curve_names, target_curve,
                                       )
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+# ---------------------------
+# Model training loop
+# ---------------------------
+
