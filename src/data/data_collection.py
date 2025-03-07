@@ -1,64 +1,70 @@
 import volue_insight_timeseries 
 import pandas as pd
 from .feature_engineering import *
-
 def get_data(X_curve_names, y_curve_names, session, start_date, end_date,
-             add_time=False, add_lag=False, add_rolling=False):
-    # Get data from both X curves and y curves
+             add_time=False, add_lag=True, add_rolling=False, lag_value=32):
+    """
+    Get data for iterative forecasting model training.
+    
+    Returns feature matrix X with lagged values and target vector y.
+    """
+    # Get data for all curves
     combined_curves = X_curve_names + y_curve_names
     cleaned_df = _get_data(combined_curves, y_curve_names, session, start_date, end_date)
     
-    # Define columns
-    X_columns = [col for col in X_curve_names if col in cleaned_df.columns]
-    y_columns = [col for col in y_curve_names if col in cleaned_df.columns]
+    # Make a copy for feature engineering
+    df = cleaned_df.copy()
     
-    # For future predictions, we need a copy of the complete dataset with all columns
-    full_df = cleaned_df.copy()
-    
-    # Extract X from the DataFrame for feature engineering
-    X_df = cleaned_df[X_columns].copy()
-    
-    # Apply transformations to X_df
+    # Add time features if requested
     if add_time:
-        X_df = add_time_features(X_df)
+        df = add_time_features(df)
     
-    # KEY CHANGE: Create lag features for BOTH X variables AND target variables
+    # Create lag features for all variables
     if add_lag:
-        # Create lag features for X columns
-        X_df = create_lag_features(X_df, columns=X_columns, lags=[32])
-        
-        # IMPORTANT: Add lagged target variables to X_df
-        for y_col in y_columns:
-            lagged_target = create_lag_features(
-                full_df[[y_col]], columns=[y_col], lags=[32]
-            )
-            # Rename to avoid confusion with the actual target
-            lagged_target.columns = [f'{y_col}_target_lag_{lag}' for lag in [32]]
-            
-            # Join to X_df
-            X_df = X_df.join(lagged_target)
+        for col in combined_curves:
+            if col in df.columns:
+                df[f"{col}_lag_{lag_value}"] = df[col].shift(lag_value)
     
+    # Add rolling features if requested
     if add_rolling:
-        X_df = create_rolling_features(X_df, columns=X_columns)
+        # Apply rolling features to lag columns
+        lag_cols = [col for col in df.columns if f"_lag_{lag_value}" in col]
+        if lag_cols:
+            rolling_df = create_rolling_features(df[lag_cols], columns=lag_cols)
+            # Add rolling features back to main dataframe
+            for col in rolling_df.columns:
+                if col not in lag_cols:  # Only add new rolling feature columns
+                    df[col] = rolling_df[col]
     
-    if add_lag:
-        X_df = impute_missing_values(X_df, method="drop")
+    # Handle missing values (from lag creation)
+    df = df.dropna()
     
-    # Get valid indices after transformations
-    valid_indices = X_df.index
+    # Define feature columns for X: only lag and engineered features
+    lag_cols = [col for col in df.columns if f"_lag_{lag_value}" in col]
+    time_cols = [] if not add_time else [col for col in df.columns 
+                                       if col not in combined_curves and 
+                                       not col.endswith(f"_lag_{lag_value}") and
+                                       not "roll" in col]
+    rolling_cols = [] if not add_rolling else [col for col in df.columns if "roll" in col]
     
-    # Extract y using only the valid indices
-    y_df = cleaned_df.loc[valid_indices, y_columns]
+    # Combine all feature columns for X
+    X_cols = lag_cols + time_cols + rolling_cols
+    
+    # Extract X and y
+    X_df = df[X_cols]
+    y_df = df[y_curve_names]
     
     # Convert to numpy arrays
     X = X_df.to_numpy()
     y = y_df.to_numpy()
     
-    # Make sure they match
-    assert len(X) == len(y), f"X and y lengths don't match: {len(X)} vs {len(y)}"
+    # Debug info
+    print(f"X shape: {X.shape}")
+    print(f"y shape: {y.shape}")
+    print(f"Feature columns: {X_df.columns.tolist()}")
+    print(f"Target columns: {y_df.columns.tolist()}")
     
-    return X, y, list(X_df.columns), list(y_df.columns)
-
+    return X, y, X_df.columns.tolist(), y_df.columns.tolist()
 
 def _get_data(curve_names: list, target_columns: list, 
               session: volue_insight_timeseries.Session,  
