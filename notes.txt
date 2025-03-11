@@ -1,0 +1,13 @@
+"vol de imb sys mw cet min15 a", #normal
+"vol de imb up mw cet min15 a",  #none
+"vol de imb down mw cet min15 a", #none
+"con de intraday mwh/h cet min15 a", #f
+"con de heating % cet min15 s", #s
+"con de cooling % cet min15 s", #s
+"pro de tot mwh/h cet min15 a", #s
+"vol de cap imb up mfrr mw cet h a", #none
+"vol de cap imb down mfrr mw cet h a", #none
+"vol de cap imb up afrr mw cet h a", #none
+"vol de cap imb down afrr mw cet h a", #none
+"pri de spot €/mwh cet h a", #pri de spot €/mwh cet min15 f. MEN: trenger ikke. actuals strekker seg 8t+ fremover
+"rdl de mwh/h cet min15 a", #s

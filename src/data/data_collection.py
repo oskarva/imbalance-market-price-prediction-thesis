@@ -2,7 +2,7 @@ import volue_insight_timeseries
 import pandas as pd
 from .feature_engineering import *
 def get_data(X_curve_names, y_curve_names, session, start_date, end_date,
-             add_time=False, add_lag=True, add_rolling=False, lag_value=32):
+             add_time=False, add_lag=False, add_rolling=False, include_y_in_X=False, lag_value=32, initial_training_set_size=0.8):
     """
     Get data for iterative forecasting model training.
     
@@ -50,9 +50,17 @@ def get_data(X_curve_names, y_curve_names, session, start_date, end_date,
     # Combine all feature columns for X
     X_cols = lag_cols + time_cols + rolling_cols
     
+    if X_cols == []:
+        X_cols = X_curve_names.copy()
+    
+    if include_y_in_X:
+        X_cols += y_curve_names
+
     # Extract X and y
     X_df = df[X_cols]
     y_df = df[y_curve_names]
+
+    n_rounds = create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size, crossval_horizon=32)
     
     # Convert to numpy arrays
     X = X_df.to_numpy()
@@ -104,3 +112,36 @@ def _get_data(curve_names: list, target_columns: list,
     cleaned_df = combined_df.dropna()
 
     return cleaned_df
+
+def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size, crossval_horizon):
+    """
+    Create cross-validation sets and save them to disk.
+    """
+    # Calculate number of crossvalidation rounds
+    n_rounds = int((1 - initial_training_set_size) * len(X_df) / crossval_horizon)
+
+    # Create cross-validation sets
+    for i in range(n_rounds):
+        X_train = X_df.iloc[:int(initial_training_set_size * len(X_df)) + i * crossval_horizon]
+        y_train = y_df.iloc[:int(initial_training_set_size * len(X_df)) + i * crossval_horizon]
+        y_test = y_df.iloc[int(initial_training_set_size * len(X_df)) + i * crossval_horizon:int(initial_training_set_size * len(X_df)) + (i + 1) * crossval_horizon]
+        
+        #TODO: Bytte ut test verdiene med forecasts.
+
+        #Get dates for forecast (I need to not include the dates where there have been NaN values in the actuals)
+        dates = y_test.index
+
+        X_test = get_forecast(dates, X_train, columns_to_forecasts)
+        #TODO: Accounter jeg her for at noen kolonner kan være droppet? Tror ikke jeg oppdaterer listen over X_kollonner (som jeg ikke bruker her enda) basert på droppede kolonner.
+        
+        X_train.to_csv(f"../data/X_train_{i}.csv", index=False)
+        y_train.to_csv(f"../data/y_train_{i}.csv", index=False)
+        X_test.to_csv(f"../data/X_test_{i}.csv", index=False)
+        y_test.to_csv(f"../data/y_test_{i}.csv", index=False)
+    
+    return n_rounds
+
+def get_forecast(X_train, y_train, X_df, y_df):
+    """
+    Get forecast for the next 32 15-minute timesteps.
+    """
