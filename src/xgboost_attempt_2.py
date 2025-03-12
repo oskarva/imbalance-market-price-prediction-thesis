@@ -37,8 +37,9 @@ session = volue_insight_timeseries.Session(config_file=os.environ.get("WAPI_CONF
 X, y, X_columns, y_columns = get_data(X_curve_names, [target_curve],
                                       session,
                                       start_date, end_date,
+                                      curve_collections["de"]["X_to_forecast"],
                                       add_time=False, 
-                                      add_lag=True,
+                                      add_lag=False,
                                       add_rolling=False,
                                       )
 

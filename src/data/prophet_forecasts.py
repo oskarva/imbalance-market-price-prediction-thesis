@@ -26,6 +26,17 @@ def fill_missing_with_prophet(df, columns_to_fill, date_column='date'):
     
     # Ensure the date column is in datetime format and set as index
     result_df[date_column] = pd.to_datetime(result_df[date_column])
+    
+    # Convert timezone-aware timestamps to timezone-naive timestamps
+    # This is necessary because Prophet doesn't support timezones
+    if result_df[date_column].dt.tz is not None:
+        # Store original timezone for later conversion back
+        original_tz = result_df[date_column].dt.tz
+        # Convert to timezone-naive by converting to UTC and then removing the timezone info
+        result_df[date_column] = result_df[date_column].dt.tz_convert('UTC').dt.tz_localize(None)
+    else:
+        original_tz = None
+    
     result_df = result_df.set_index(date_column)
     
     # Sort by date to ensure time order
@@ -99,6 +110,10 @@ def fill_missing_with_prophet(df, columns_to_fill, date_column='date'):
     
     # Reset index to return the date as a column
     result_df = result_df.reset_index()
+    
+    # Convert back to original timezone if necessary
+    if original_tz is not None:
+        result_df[date_column] = result_df[date_column].dt.tz_localize('UTC').dt.tz_convert(original_tz)
     
     return result_df
 

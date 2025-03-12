@@ -1,4 +1,5 @@
 import volue_insight_timeseries 
+from volue_insight_timeseries.curves import InstanceCurve
 import pandas as pd
 from .feature_engineering import *
 from .prophet_forecasts import fill_missing_with_prophet
@@ -134,10 +135,10 @@ def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size,
         X_test = get_forecast(dates, X_train, X_to_forecast, session)
         #TODO: Accounter jeg her for at noen kolonner kan være droppet? Tror ikke jeg oppdaterer listen over X_kollonner (som jeg ikke bruker her enda) basert på droppede kolonner.
         
-        X_train.to_csv(f"../data/X_train_{i}.csv", index=False)
-        y_train.to_csv(f"../data/y_train_{i}.csv", index=False)
-        X_test.to_csv(f"../data/X_test_{i}.csv", index=False)
-        y_test.to_csv(f"../data/y_test_{i}.csv", index=False)
+        X_train.to_csv(f"./src/data/csv/X_train_{i}.csv", index=False)
+        y_train.to_csv(f"./src/data/csv/y_train_{i}.csv", index=False)
+        X_test.to_csv(f"./src/data/csv/X_test_{i}.csv", index=False)
+        y_test.to_csv(f"./src/data/csv/y_test_{i}.csv", index=False)
     
     return n_rounds
 
@@ -156,20 +157,45 @@ def get_forecast(dates, X_train, X_to_forecast, session):
     forecast_dates = pd.date_range(forecast_start_date, forecast_end_date, freq='15min')
     # Create forecast DataFrame
     X_forecast = pd.DataFrame(index=forecast_dates)
+    # Set columns to avoid KeyError
+    for orig in X_to_forecast.keys():
+        X_forecast[orig] = None
     
     # Get forecast data
-    for col in X_to_forecast.values():
+    for (orig, col) in X_to_forecast.items():
 
         if col is None:
-            X_forecast = fill_missing_with_prophet(df=X_forecast, column=col, start_date=forecast_start_date, end_date=forecast_end_date)
+            # I need to add empty rows to a copy of X_train for the rows that are to be forecasted
+            # Then I need to fill the missing values in these rows with Prophet
+            # Then I need to get the last 32 values of the forecasted rows
+            # Then I need to add these values to X_forecast
+            X_train_copy = X_train.copy()
+            # Add empty rows
+            X_train_copy = pd.concat([X_train_copy, pd.DataFrame(index=forecast_dates, columns=X_train_copy.columns)])
 
+            result = fill_missing_with_prophet(df=X_train_copy.reset_index(), columns_to_fill=[orig], date_column="index")
+            # get only the 32 forecast values
+            result = result.set_index("index")
+
+            X_forecast[orig] = result[orig].iloc[-32:]
         else:
             curve = session.get_curve(name=col)
-            ts = curve.get_data(data_from=forecast_start_date, data_to=forecast_end_date)
+            if type(curve) is InstanceCurve:
+                ts = curve.get_instance(
+                    issue_date=forecast_start_date,
+                    data_from=forecast_start_date,
+                    data_to=forecast_end_date,
+                    )
+            else:
+                ts = curve.get_data(data_from=forecast_start_date, data_to=forecast_end_date)
             s = ts.to_pandas()
-            X_forecast[col] = s
+            X_forecast[orig] = s
 
-            # if there is a NaN value in the forecast, fill it with the last known value
-            X_forecast = X_forecast.fillna(method='ffill')
+            # Upsample series with 1-hour frequency to 15-minute intervals
+            if " h " in col:
+                X_forecast[orig] = X_forecast[orig].resample('15min').ffill()
+
+    # if there is a NaN value in the forecast, fill it with the last known value
+    X_forecast = X_forecast.fillna(method='ffill')
     
     return X_forecast
