@@ -1,7 +1,9 @@
 import volue_insight_timeseries 
 import pandas as pd
 from .feature_engineering import *
-def get_data(X_curve_names, y_curve_names, session, start_date, end_date,
+from .prophet_forecasts import fill_missing_with_prophet
+
+def get_data(X_curve_names, y_curve_names, session, start_date, end_date, X_to_forecast,
              add_time=False, add_lag=False, add_rolling=False, include_y_in_X=False, lag_value=32, initial_training_set_size=0.8):
     """
     Get data for iterative forecasting model training.
@@ -60,7 +62,7 @@ def get_data(X_curve_names, y_curve_names, session, start_date, end_date,
     X_df = df[X_cols]
     y_df = df[y_curve_names]
 
-    n_rounds = create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size, crossval_horizon=32)
+    n_rounds = create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size, X_to_forecast, session, crossval_horizon=32)
     
     # Convert to numpy arrays
     X = X_df.to_numpy()
@@ -113,7 +115,7 @@ def _get_data(curve_names: list, target_columns: list,
 
     return cleaned_df
 
-def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size, crossval_horizon):
+def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size, X_to_forecast, session, crossval_horizon):
     """
     Create cross-validation sets and save them to disk.
     """
@@ -131,7 +133,7 @@ def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size,
         #Get dates for forecast (I need to not include the dates where there have been NaN values in the actuals)
         dates = y_test.index
 
-        X_test = get_forecast(dates, X_train, columns_to_forecasts)
+        X_test = get_forecast(dates, X_train, X_to_forecast, session)
         #TODO: Accounter jeg her for at noen kolonner kan være droppet? Tror ikke jeg oppdaterer listen over X_kollonner (som jeg ikke bruker her enda) basert på droppede kolonner.
         
         X_train.to_csv(f"../data/X_train_{i}.csv", index=False)
@@ -141,7 +143,35 @@ def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size,
     
     return n_rounds
 
-def get_forecast(X_train, y_train, X_df, y_df):
+def get_forecast(dates, X_train, X_to_forecast, session):
     """
     Get forecast for the next 32 15-minute timesteps.
     """
+
+    # Get last date in training set
+    last_date = X_train.index[-1]
+    # Get forecast start date
+    forecast_start_date = last_date + pd.Timedelta(minutes=15)
+    # Get forecast end date
+    forecast_end_date = forecast_start_date + pd.Timedelta(minutes=15*32)
+    # Create forecast dates
+    forecast_dates = pd.date_range(forecast_start_date, forecast_end_date, freq='15min')
+    # Create forecast DataFrame
+    X_forecast = pd.DataFrame(index=forecast_dates)
+    
+    # Get forecast data
+    for col in X_to_forecast.values():
+
+        if col is None:
+            X_forecast = fill_missing_with_prophet(df=X_forecast, column=col, start_date=forecast_start_date, end_date=forecast_end_date)
+
+        else:
+            curve = session.get_curve(name=col)
+            ts = curve.get_data(data_from=forecast_start_date, data_to=forecast_end_date)
+            s = ts.to_pandas()
+            X_forecast[col] = s
+
+            # if there is a NaN value in the forecast, fill it with the last known value
+            X_forecast = X_forecast.fillna(method='ffill')
+    
+    return X_forecast
