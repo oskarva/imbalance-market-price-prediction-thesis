@@ -144,58 +144,125 @@ def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size,
 
 def get_forecast(dates, X_train, X_to_forecast, session):
     """
-    Get forecast for the next 32 15-minute timesteps.
+    Get forecast for the next 32 15-minute timesteps, with proper handling of 15-minute intervals.
     """
-
     # Get last date in training set
     last_date = X_train.index[-1]
-    # Get forecast start date
-    forecast_start_date = last_date + pd.Timedelta(minutes=15)
-    # Get forecast end date
-    forecast_end_date = forecast_start_date + pd.Timedelta(minutes=15*32)
-    # Create forecast dates
-    forecast_dates = pd.date_range(forecast_start_date, forecast_end_date, freq='15min')
-    # Create forecast DataFrame
-    X_forecast = pd.DataFrame(index=forecast_dates)
-    # Set columns to avoid KeyError
-    for orig in X_to_forecast.keys():
-        X_forecast[orig] = None
     
-    # Get forecast data
+    # Get forecast start date (next 15-min interval)
+    forecast_start_date = last_date + pd.Timedelta(minutes=15)
+    
+    # Get forecast end date (32 intervals ahead)
+    forecast_end_date = forecast_start_date + pd.Timedelta(minutes=15*31)  # 31 intervals after start = 32 total
+    
+    # Create forecast dates with explicit 15-min frequency
+    forecast_dates = pd.date_range(forecast_start_date, forecast_end_date, freq='15min')
+    
+    # Verify we have exactly 32 forecast points
+    if len(forecast_dates) != 32:
+        print(f"Warning: Expected 32 forecast points, but generated {len(forecast_dates)}")
+    
+    # Create forecast DataFrame with all columns from X_train
+    X_forecast = pd.DataFrame(index=forecast_dates, columns=X_train.columns)
+    
+    # Process each column in X_to_forecast 
     for (orig, col) in X_to_forecast.items():
-
         if col is None:
-            # I need to add empty rows to a copy of X_train for the rows that are to be forecasted
-            # Then I need to fill the missing values in these rows with Prophet
-            # Then I need to get the last 32 values of the forecasted rows
-            # Then I need to add these values to X_forecast
+            # Need to forecast this column with Prophet
+            print(f"Forecasting column {orig} with Prophet")
+            
+            # Prepare data for Prophet
             X_train_copy = X_train.copy()
-            # Add empty rows
-            X_train_copy = pd.concat([X_train_copy, pd.DataFrame(index=forecast_dates, columns=X_train_copy.columns)])
-
-            result = fill_missing_with_prophet(df=X_train_copy.reset_index(), columns_to_fill=[orig], date_column="index")
-            # get only the 32 forecast values
+            
+            # Add empty rows for the forecast period
+            forecast_df = pd.DataFrame(index=forecast_dates, columns=X_train_copy.columns)
+            X_train_copy = pd.concat([X_train_copy, forecast_df])
+            
+            # Reset index for Prophet
+            df_for_prophet = X_train_copy.reset_index()
+            
+            # Use updated Prophet function to fill missing values
+            result = fill_missing_with_prophet(
+                df=df_for_prophet, 
+                columns_to_fill=[orig], 
+                date_column="index"
+            )
+            
+            # Set index back and get forecast values
             result = result.set_index("index")
-
-            X_forecast[orig] = result[orig].iloc[-32:]
+            
+            # Extract only the 32 forecast values we need
+            X_forecast[orig] = result[orig].loc[forecast_dates]
+            
         else:
+            # Get data from an external forecast curve
+            print(f"Fetching external forecast for {orig} from curve {col}")
             curve = session.get_curve(name=col)
-            if type(curve) is InstanceCurve:
+            
+            if type(curve) is volue_insight_timeseries.curves.InstanceCurve:
                 ts = curve.get_instance(
                     issue_date=forecast_start_date,
                     data_from=forecast_start_date,
                     data_to=forecast_end_date,
-                    )
+                )
             else:
                 ts = curve.get_data(data_from=forecast_start_date, data_to=forecast_end_date)
+            
             s = ts.to_pandas()
             X_forecast[orig] = s
-
-            # Upsample series with 1-hour frequency to 15-minute intervals
+            
+            # Upsample hourly data to 15-minute intervals if needed
             if " h " in col:
                 X_forecast[orig] = X_forecast[orig].resample('15min').ffill()
-
-    # if there is a NaN value in the forecast, fill it with the last known value
+    
+    # For columns not explicitly specified in X_to_forecast, derive forecast
+    # using appropriate strategies
+    missing_columns = [col for col in X_forecast.columns if col not in X_to_forecast.keys()]
+    
+    if missing_columns:
+        print(f"Handling additional columns: {missing_columns}")
+        
+        for col in missing_columns:
+            # Check if we should use Prophet or a simpler approach
+            use_prophet = True  # Set to False if you want to use simple approach for some columns
+            
+            if use_prophet:
+                # Use Prophet for forecasting this column
+                X_train_copy = X_train.copy()
+                forecast_df = pd.DataFrame(index=forecast_dates, columns=[col])
+                X_train_copy = pd.concat([X_train_copy, forecast_df])
+                
+                df_for_prophet = X_train_copy.reset_index()
+                result = fill_missing_with_prophet(
+                    df=df_for_prophet, 
+                    columns_to_fill=[col], 
+                    date_column="index"
+                )
+                result = result.set_index("index")
+                X_forecast[col] = result[col].loc[forecast_dates]
+            else:
+                # Simpler approach: use last known value
+                X_forecast[col] = X_train[col].iloc[-1]
+    
+    # Verify no NaN values remain
+    nan_count_before = X_forecast.isna().sum().sum()
+    if nan_count_before > 0:
+        print(f"Warning: {nan_count_before} NaN values before fillna")
+    
+    # Apply forward fill first
     X_forecast = X_forecast.fillna(method='ffill')
+    
+    # Use backward fill as backup
+    X_forecast = X_forecast.fillna(method='bfill')
+    
+    # As a last resort, fill remaining NaNs with zeros
+    final_nan_count = X_forecast.isna().sum().sum()
+    if final_nan_count > 0:
+        print(f"Warning: Still have {final_nan_count} NaN values after ffill/bfill, filling with zeros")
+        X_forecast = X_forecast.fillna(0)
+    
+    # Final verification
+    if X_forecast.isna().sum().sum() > 0:
+        print("ERROR: NaN values still present in forecast data!")
     
     return X_forecast

@@ -6,6 +6,7 @@ from datetime import timedelta
 def fill_missing_with_prophet(df, columns_to_fill, date_column='date'):
     """
     Fill missing values in a dataframe for specific columns using Prophet forecasting.
+    Optimized for 15-minute interval data with proper seasonality patterns.
     
     Parameters:
     -----------
@@ -24,22 +25,19 @@ def fill_missing_with_prophet(df, columns_to_fill, date_column='date'):
     # Make a copy of the input dataframe to avoid modifying the original
     result_df = df.copy()
     
-    # Ensure the date column is in datetime format and set as index
+    # Ensure the date column is in datetime format
     result_df[date_column] = pd.to_datetime(result_df[date_column])
     
-    # Convert timezone-aware timestamps to timezone-naive timestamps
-    # This is necessary because Prophet doesn't support timezones
+    # Handle timezone issues
     if result_df[date_column].dt.tz is not None:
-        # Store original timezone for later conversion back
         original_tz = result_df[date_column].dt.tz
-        # Convert to timezone-naive by converting to UTC and then removing the timezone info
+        # Convert to timezone-naive by converting to UTC and then removing timezone info
         result_df[date_column] = result_df[date_column].dt.tz_convert('UTC').dt.tz_localize(None)
     else:
         original_tz = None
     
+    # Set index and sort
     result_df = result_df.set_index(date_column)
-    
-    # Sort by date to ensure time order
     result_df = result_df.sort_index()
     
     # Process each column that needs filling
@@ -47,7 +45,6 @@ def fill_missing_with_prophet(df, columns_to_fill, date_column='date'):
         print(f"Processing column: {column}")
         
         # Find ranges of missing data
-        # Create a series indicating where values are missing
         is_missing = result_df[column].isna()
         
         # If no missing values, skip this column
@@ -55,7 +52,7 @@ def fill_missing_with_prophet(df, columns_to_fill, date_column='date'):
             print(f"No missing values in column {column}, skipping.")
             continue
         
-        # Get the start and end indices of missing data blocks
+        # Identify continuous missing ranges
         missing_ranges = []
         missing_start = None
         
@@ -63,7 +60,7 @@ def fill_missing_with_prophet(df, columns_to_fill, date_column='date'):
             if missing and missing_start is None:
                 missing_start = idx
             elif not missing and missing_start is not None:
-                missing_ranges.append((missing_start, idx - timedelta(days=1)))
+                missing_ranges.append((missing_start, idx - timedelta(minutes=15)))  # Adjusted for 15-min intervals
                 missing_start = None
                 
         # Check if the last range is still open
@@ -75,29 +72,63 @@ def fill_missing_with_prophet(df, columns_to_fill, date_column='date'):
             print(f"Filling missing data from {start_date} to {end_date}")
             
             # Get training data before the missing range
-            train_data = result_df.loc[:start_date - timedelta(days=1), column].dropna()
+            # For 15-min data, try to get at least a week of data
+            train_data = result_df.loc[:start_date - timedelta(minutes=15), column].dropna()
             
-            # Skip if not enough training data
-            if len(train_data) < 14:  # Need at least 2 weeks of data
-                print(f"Not enough training data before {start_date}, skipping this range.")
-                continue
+            # Skip if not enough training data (at least 96*7 points = 1 week)
+            min_training_points = 96 * 7  # 96 points per day × 7 days
+            if len(train_data) < min_training_points:
+                print(f"Not enough training data before {start_date}, trying with available data.")
+                # If less than ideal but still have some data, proceed with caution
+                if len(train_data) < 96:  # At least one day of data
+                    print(f"Too little data (<1 day) to train model, using last known value instead.")
+                    # Fill with last known value
+                    last_value = train_data.iloc[-1] if not train_data.empty else 0
+                    missing_mask = (result_df.index >= start_date) & (result_df.index <= end_date)
+                    result_df.loc[missing_mask, column] = last_value
+                    continue
             
-            # Prepare data for Prophet
+            # Prepare data for Prophet - ensure at least daily seasonality
             train_df = pd.DataFrame({
                 'ds': train_data.index,
                 'y': train_data.values
             })
             
-            # Train Prophet model
-            model = Prophet(daily_seasonality=True)
+            # Configure Prophet model for 15-minute data
+            model = Prophet(
+                daily_seasonality=True,  # Always include daily patterns
+                weekly_seasonality=True,  # Weekly patterns are often important
+                yearly_seasonality=True if len(train_data) > 96*365 else False,  # Yearly if enough data
+                changepoint_prior_scale=0.05,  # Slightly more flexible than default
+                seasonality_prior_scale=10.0,  # Emphasize seasonality 
+                changepoint_range=0.95  # Allow changes up to 95% of the training data
+            )
+            
+            # Add hourly seasonality (crucial for 15-min data)
+            model.add_seasonality(
+                name='hourly',
+                period=24/24,  # 1 hour period in days
+                fourier_order=8  # Higher order for more flexibility in the curve
+            )
+            
+            # Add quarter-hourly seasonality if we have enough data
+            if len(train_data) > 96*14:  # Two weeks of data
+                model.add_seasonality(
+                    name='quarter_hourly',
+                    period=1/96,  # 15 minutes in days
+                    fourier_order=3  # Lower order - simpler pattern
+                )
+            
+            # Fit the model
             model.fit(train_df)
             
-            # Create future dataframe including the missing range
+            # Create future dataframe including the missing range WITH 15-MIN FREQUENCY
             future_dates = pd.date_range(
                 start=start_date,
                 end=end_date,
-                freq='D'
+                freq='15min'  # Crucial: use 15-min frequency to match data
             )
+            
             future_df = pd.DataFrame({'ds': future_dates})
             
             # Generate forecasts
