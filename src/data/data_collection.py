@@ -127,8 +127,6 @@ def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size,
         X_train = X_df.iloc[:int(initial_training_set_size * len(X_df)) + i * crossval_horizon]
         y_train = y_df.iloc[:int(initial_training_set_size * len(X_df)) + i * crossval_horizon]
         y_test = y_df.iloc[int(initial_training_set_size * len(X_df)) + i * crossval_horizon:int(initial_training_set_size * len(X_df)) + (i + 1) * crossval_horizon]
-        
-        #TODO: Bytte ut test verdiene med forecasts.
 
         #Get dates for forecast (I need to not include the dates where there have been NaN values in the actuals)
         dates = y_test.index
