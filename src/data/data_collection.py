@@ -75,7 +75,7 @@ def get_data(X_curve_names, y_curve_names, session, start_date, end_date, X_to_f
     print(f"Feature columns: {X_df.columns.tolist()}")
     print(f"Target columns: {y_df.columns.tolist()}")
     
-    return X, y, X_df.columns.tolist(), y_df.columns.tolist()
+    return X, y, X_df.columns.tolist(), y_df.columns.tolist(), n_rounds
 
 def _get_data(curve_names: list, target_columns: list, 
               session: volue_insight_timeseries.Session,  

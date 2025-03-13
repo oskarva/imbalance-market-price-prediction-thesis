@@ -24,7 +24,7 @@ os.makedirs(output_dir, exist_ok=True)
 # Parameters and Data Loading
 # ---------------------------
 start_date = pd.Timestamp("2021-01-01")
-end_date = pd.Timestamp.today()
+end_date = pd.Timestamp(year=2025, month=3, day=13)
 
 # Define the curves:
 # X_curve_names: additional independent curves.
