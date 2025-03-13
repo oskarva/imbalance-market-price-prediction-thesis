@@ -3,11 +3,15 @@ from volue_insight_timeseries.curves import InstanceCurve
 import pandas as pd
 from .feature_engineering import *
 from .prophet_forecasts import fill_missing_with_prophet
+import gc
+import os
+
 
 def get_data(X_curve_names, y_curve_names, session, start_date, end_date, X_to_forecast,
-             add_time=False, add_lag=False, add_rolling=False, include_y_in_X=False, lag_value=32, initial_training_set_size=0.8):
+             add_time=False, add_lag=False, add_rolling=False, include_y_in_X=False, 
+             lag_value=32, initial_training_set_size=0.8, batch_size=10):
     """
-    Get data for iterative forecasting model training.
+    Get data for iterative forecasting model training with improved memory management.
     
     Returns feature matrix X with lagged values and target vector y.
     """
@@ -63,19 +67,111 @@ def get_data(X_curve_names, y_curve_names, session, start_date, end_date, X_to_f
     X_df = df[X_cols]
     y_df = df[y_curve_names]
 
-    n_rounds = create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size, X_to_forecast, session, crossval_horizon=32)
+    print("Starting cross-validation set creation...")
+    n_rounds = create_cross_validation_sets_and_save(
+        X_df, y_df, initial_training_set_size, X_to_forecast, 
+        session, crossval_horizon=32, batch_size=batch_size
+    )
     
-    # Convert to numpy arrays
-    X = X_df.to_numpy()
-    y = y_df.to_numpy()
+    # Convert to numpy arrays - but only return a subset to save memory
+    # You probably don't need the full array for immediate use
+    sample_size = min(10000, len(X_df))
+    X = X_df.iloc[:sample_size].to_numpy()
+    y = y_df.iloc[:sample_size].to_numpy()
     
     # Debug info
-    print(f"X shape: {X.shape}")
-    print(f"y shape: {y.shape}")
+    print(f"X shape (sample): {X.shape}")
+    print(f"y shape (sample): {y.shape}")
     print(f"Feature columns: {X_df.columns.tolist()}")
     print(f"Target columns: {y_df.columns.tolist()}")
+    print(f"Total cross-validation rounds: {n_rounds}")
     
     return X, y, X_df.columns.tolist(), y_df.columns.tolist(), n_rounds
+
+
+def create_cross_validation_sets_and_save(X_df, y_df, 
+                                          initial_training_set_size, X_to_forecast, 
+                                          session, crossval_horizon=32, batch_size=10, 
+                                          checkpoint_file="cv_checkpoint.txt"):
+    """
+    Create cross-validation sets and save them to disk with improved memory management and checkpointing.
+    
+    Parameters:
+    -----------
+    X_df, y_df: DataFrames with features and targets
+    initial_training_set_size: Fraction of data to use for initial training
+    X_to_forecast: Dictionary mapping column names to forecast sources
+    session: API session
+    crossval_horizon: Number of steps to forecast
+    batch_size: Number of rounds to process before cleaning memory
+    checkpoint_file: File to save progress for resuming
+    """
+    
+    
+    # Calculate number of crossvalidation rounds
+    n_rounds = int((1 - initial_training_set_size) * len(X_df) / crossval_horizon)
+    print(f"Total cross-validation rounds to process: {n_rounds}")
+    
+    # Create directory if it doesn't exist
+    os.makedirs("./src/data/csv", exist_ok=True)
+    
+    # Check if we're resuming from a checkpoint
+    start_round = 0
+    if os.path.exists(checkpoint_file):
+        with open(checkpoint_file, 'r') as f:
+            start_round = int(f.read().strip())
+            print(f"Resuming from round {start_round}")
+    
+    # Process rounds in batches to manage memory
+    for i in range(start_round, n_rounds):
+        print(f"Processing round {i+1} of {n_rounds}")
+        
+        try:
+            # Define training and test indices for this round
+            train_end_idx = int(initial_training_set_size * len(X_df)) + i * crossval_horizon
+            test_end_idx = min(train_end_idx + crossval_horizon, len(X_df))
+            
+            # Extract training sets
+            X_train = X_df.iloc[:train_end_idx]
+            y_train = y_df.iloc[:train_end_idx]
+            
+            # Get test target values
+            y_test = y_df.iloc[train_end_idx:test_end_idx]
+            
+            # Get dates for forecast
+            dates = y_test.index
+            
+            # Generate forecast features
+            print(f"Generating forecast for dates: {dates[0]} to {dates[-1]}")
+            X_test = get_forecast(dates, X_train, X_to_forecast, session)
+            
+            # Save to disk
+            print(f"Saving cross-validation sets for round {i}")
+            X_train.to_csv(f"./src/data/csv/X_train_{i}.csv", index=True)
+            y_train.to_csv(f"./src/data/csv/y_train_{i}.csv", index=True)
+            X_test.to_csv(f"./src/data/csv/X_test_{i}.csv", index=True)
+            y_test.to_csv(f"./src/data/csv/y_test_{i}.csv", index=True)
+            
+            # Save checkpoint
+            with open(checkpoint_file, 'w') as f:
+                f.write(str(i+1))
+            
+            # Clean up memory periodically
+            if (i + 1) % batch_size == 0:
+                print(f"Completed batch of {batch_size} rounds. Cleaning memory...")
+                del X_train, y_train, X_test, y_test
+                gc.collect()  # Force garbage collection
+                
+        except Exception as e:
+            print(f"Error in round {i}: {str(e)}")
+            # Save checkpoint at the error point
+            with open(checkpoint_file, 'w') as f:
+                f.write(str(i))
+            raise  # Re-raise the exception to see the full error
+    
+    print(f"Successfully completed all {n_rounds} cross-validation rounds")
+    return n_rounds
+
 
 def _get_data(curve_names: list, target_columns: list, 
               session: volue_insight_timeseries.Session,  
@@ -115,32 +211,6 @@ def _get_data(curve_names: list, target_columns: list,
     cleaned_df = combined_df.dropna()
 
     return cleaned_df
-
-def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size, X_to_forecast, session, crossval_horizon):
-    """
-    Create cross-validation sets and save them to disk.
-    """
-    # Calculate number of crossvalidation rounds
-    n_rounds = int((1 - initial_training_set_size) * len(X_df) / crossval_horizon)
-
-    # Create cross-validation sets
-    for i in range(n_rounds):
-        X_train = X_df.iloc[:int(initial_training_set_size * len(X_df)) + i * crossval_horizon]
-        y_train = y_df.iloc[:int(initial_training_set_size * len(X_df)) + i * crossval_horizon]
-        y_test = y_df.iloc[int(initial_training_set_size * len(X_df)) + i * crossval_horizon:int(initial_training_set_size * len(X_df)) + (i + 1) * crossval_horizon]
-
-        #Get dates for forecast (I need to not include the dates where there have been NaN values in the actuals)
-        dates = y_test.index
-
-        X_test = get_forecast(dates, X_train, X_to_forecast, session)
-        #TODO: Accounter jeg her for at noen kolonner kan være droppet? Tror ikke jeg oppdaterer listen over X_kollonner (som jeg ikke bruker her enda) basert på droppede kolonner.
-        
-        X_train.to_csv(f"./src/data/csv/X_train_{i}.csv", index=False)
-        y_train.to_csv(f"./src/data/csv/y_train_{i}.csv", index=False)
-        X_test.to_csv(f"./src/data/csv/X_test_{i}.csv", index=False)
-        y_test.to_csv(f"./src/data/csv/y_test_{i}.csv", index=False)
-    
-    return n_rounds
 
 def get_forecast(dates, X_train, X_to_forecast, session):
     """
