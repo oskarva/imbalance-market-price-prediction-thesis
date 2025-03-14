@@ -1,0 +1,12 @@
+{
+  "start": 0,
+  "end": null,
+  "step": 1,
+  "output": "./results/cv_run",
+  "n_estimators": 1000,
+  "learning_rate": 0.01,
+  "max_depth": 20,
+  "subsample": 1.0,
+  "colsample_bytree": 1.0,
+  "no_save": false
+}

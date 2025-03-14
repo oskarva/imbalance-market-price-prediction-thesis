@@ -138,16 +138,34 @@ def preprocess_data(X_train: pd.DataFrame,
     X_test_processed = X_test.copy()
     y_test_processed = y_test.copy()
     
-    # Remove timezone info if requested
+    # Ensure indices are datetime type
+    try:
+        if not isinstance(X_train_processed.index, pd.DatetimeIndex):
+            X_train_processed.index = pd.to_datetime(X_train_processed.index, utc=True)
+        if not isinstance(y_train_processed.index, pd.DatetimeIndex):
+            y_train_processed.index = pd.to_datetime(y_train_processed.index, utc=True)
+        if not isinstance(X_test_processed.index, pd.DatetimeIndex):
+            X_test_processed.index = pd.to_datetime(X_test_processed.index, utc=True)
+        if not isinstance(y_test_processed.index, pd.DatetimeIndex):
+            y_test_processed.index = pd.to_datetime(y_test_processed.index, utc=True)
+    except Exception as e:
+        print(f"Warning: Couldn't convert indices to datetime: {str(e)}")
+        print("Continuing without timezone processing...")
+        remove_timezone = False
+    
+    # Remove timezone info if requested and possible
     if remove_timezone:
-        if X_train_processed.index.tz is not None:
-            X_train_processed.index = X_train_processed.index.tz_localize(None)
-        if y_train_processed.index.tz is not None:
-            y_train_processed.index = y_train_processed.index.tz_localize(None)
-        if X_test_processed.index.tz is not None:
-            X_test_processed.index = X_test_processed.index.tz_localize(None)
-        if y_test_processed.index.tz is not None:
-            y_test_processed.index = y_test_processed.index.tz_localize(None)
+        try:
+            if hasattr(X_train_processed.index, 'tz') and X_train_processed.index.tz is not None:
+                X_train_processed.index = X_train_processed.index.tz_localize(None)
+            if hasattr(y_train_processed.index, 'tz') and y_train_processed.index.tz is not None:
+                y_train_processed.index = y_train_processed.index.tz_localize(None)
+            if hasattr(X_test_processed.index, 'tz') and X_test_processed.index.tz is not None:
+                X_test_processed.index = X_test_processed.index.tz_localize(None)
+            if hasattr(y_test_processed.index, 'tz') and y_test_processed.index.tz is not None:
+                y_test_processed.index = y_test_processed.index.tz_localize(None)
+        except Exception as e:
+            print(f"Warning: Error removing timezone info: {str(e)}")
     
     # Scale features if requested
     if scale_features:
@@ -172,7 +190,6 @@ def preprocess_data(X_train: pd.DataFrame,
         )
     
     return X_train_processed, y_train_processed, X_test_processed, y_test_processed
-
 
 def batch_generator(X: pd.DataFrame, 
                    y: pd.DataFrame, 
