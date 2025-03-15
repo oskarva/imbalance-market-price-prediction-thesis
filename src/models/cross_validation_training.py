@@ -209,9 +209,10 @@ def run_cross_validation(params: Dict,
                         step: int = 1,
                         save_results: bool = True,
                         output_dir: str = './results',
-                        model_type: str = 'xgboost'):
+                        model_type: str = 'xgboost',
+                        store_predictions: bool = True):
     """
-    Run cross-validation with the specified parameters.
+    Run cross-validation with the specified parameters and store predictions.
     
     Args:
         params: Model parameters
@@ -221,6 +222,7 @@ def run_cross_validation(params: Dict,
         save_results: Whether to save results to disk
         output_dir: Directory to save results
         model_type: Type of model to train ('xgboost' or other)
+        store_predictions: Whether to store actual vs. predicted values
     """
     # Create output directory if it doesn't exist
     if save_results:
@@ -230,7 +232,8 @@ def run_cross_validation(params: Dict,
     results = {
         'params': params,
         'rounds': {},
-        'summary': {}
+        'summary': {},
+        'predictions': {} if store_predictions else None
     }
     
     # Track metrics across all rounds
@@ -249,6 +252,10 @@ def run_cross_validation(params: Dict,
         print(f"\nProcessing round {round_num}...")
         round_start_time = time.time()
         
+        # Store original test data for plotting
+        if store_predictions:
+            original_y_test = y_test.copy()
+        
         # Preprocess data
         X_train, y_train, X_test, y_test = preprocess_data(
             X_train, y_train, X_test, y_test,
@@ -265,6 +272,7 @@ def run_cross_validation(params: Dict,
         
         # Evaluate on test set
         print(f"Evaluating model...")
+        
         # Try to find target lag column for iterative forecasting
         target_lag_idx = None
         target_col = y_train.columns[0]
@@ -277,6 +285,64 @@ def run_cross_validation(params: Dict,
         # Single-step evaluation
         single_step_metrics = evaluate_model(model, X_test, y_test, 
                                           iterative_forecast=False)
+        
+        # Store predictions if requested
+        if store_predictions:
+            y_pred = single_step_metrics['predictions']
+            
+            # Create DataFrame with actual and predicted values
+            pred_df = pd.DataFrame({
+                'actual': original_y_test.iloc[:, 0].values,
+                'predicted': y_pred,
+                'timestamp': original_y_test.index
+            })
+            
+            # Store in results
+            results['predictions'][round_num] = pred_df
+            
+            # Calculate additional metrics that might help explain poor R²
+            variance_y = np.var(pred_df['actual'])
+            mean_y = np.mean(pred_df['actual'])
+            min_y = np.min(pred_df['actual'])
+            max_y = np.max(pred_df['actual'])
+            
+            # Print info about test set distribution
+            print(f"  Test set variance: {variance_y:.4f}")
+            print(f"  Test set mean: {mean_y:.4f}")
+            print(f"  Test set range: [{min_y:.4f}, {max_y:.4f}]")
+            
+            # Save prediction CSV
+            if save_results:
+                pred_df.to_csv(f"{output_dir}/round_{round_num}_predictions.csv", index=False)
+            
+            # Create and save plot
+            if save_results:
+                plt.figure(figsize=(12, 6))
+                
+                # Plot actual vs predicted values
+                plt.subplot(1, 2, 1)
+                plt.plot(pred_df['timestamp'], pred_df['actual'], 'b-', label='Actual')
+                plt.plot(pred_df['timestamp'], pred_df['predicted'], 'r--', label='Predicted')
+                plt.title(f'Round {round_num} - Actual vs Predicted')
+                plt.ylabel('Price')
+                plt.legend()
+                plt.xticks(rotation=45)
+                plt.grid(True)
+                
+                # Scatter plot to visualize correlation
+                plt.subplot(1, 2, 2)
+                plt.scatter(pred_df['actual'], pred_df['predicted'])
+                plt.xlabel('Actual')
+                plt.ylabel('Predicted')
+                plt.title(f'Correlation Plot (R² = {single_step_metrics["r2"]:.4f})')
+                min_val = min(pred_df['actual'].min(), pred_df['predicted'].min())
+                max_val = max(pred_df['actual'].max(), pred_df['predicted'].max())
+                plt.plot([min_val, max_val], [min_val, max_val], 'g-', alpha=0.5)  # Perfect prediction line
+                plt.grid(True)
+                
+                plt.tight_layout()
+                plt.savefig(f"{output_dir}/round_{round_num}_pred_vs_actual.png")
+                plt.close()
         
         # Iterative forecasting evaluation (if target lag found)
         if target_lag_idx is not None:
@@ -321,29 +387,30 @@ def run_cross_validation(params: Dict,
         # Save partial results after each round
         if save_results:
             timestamp = int(time.time())
-            with open(f"{output_dir}/round_{round_num}_results_{timestamp}.json", 'w') as f:
-                # Save only what can be serialized
-                serializable_results = {
-                    'single_step': {
-                        'mae': single_step_metrics['mae'],
-                        'rmse': single_step_metrics['rmse'],
-                        'r2': single_step_metrics['r2'],
-                        'method': single_step_metrics['method']
-                    },
-                    'duration': round_duration
-                }
-                
-                if iterative_metrics:
-                    serializable_results['iterative'] = {
-                        'mae': iterative_metrics['mae'],
-                        'rmse': iterative_metrics['rmse'],
-                        'r2': iterative_metrics['r2'],
-                        'method': iterative_metrics['method']
-                    }
-                
-                json.dump(serializable_results, f, indent=2)
             
-            # Save plot
+            # Save round metrics (without the large prediction arrays)
+            round_metrics = {
+                'single_step': {
+                    'mae': single_step_metrics['mae'],
+                    'rmse': single_step_metrics['rmse'],
+                    'r2': single_step_metrics['r2'],
+                    'method': single_step_metrics['method']
+                },
+                'duration': round_duration
+            }
+            
+            if iterative_metrics:
+                round_metrics['iterative'] = {
+                    'mae': iterative_metrics['mae'],
+                    'rmse': iterative_metrics['rmse'],
+                    'r2': iterative_metrics['r2'],
+                    'method': iterative_metrics['method']
+                }
+            
+            with open(f"{output_dir}/round_{round_num}_results_{timestamp}.json", 'w') as f:
+                json.dump(round_metrics, f, indent=2)
+            
+            # Save plot for iterative forecasting
             if iterative_metrics and 'predictions' in iterative_metrics:
                 try:
                     # Get a sample prediction for visualization
@@ -356,13 +423,15 @@ def run_cross_validation(params: Dict,
                         plt.title(f'Round {round_num} - Iterative Forecast')
                         plt.legend()
                         plt.grid(True)
-                        plt.savefig(f"{output_dir}/round_{round_num}_forecast.png")
+                        plt.savefig(f"{output_dir}/round_{round_num}_iterative_forecast.png")
                         plt.close()
                 except Exception as e:
                     print(f"Error saving plot: {str(e)}")
         
         # Clean up memory
         del X_train, y_train, X_test, y_test, model
+        if store_predictions and 'pred_df' in locals():
+            del pred_df
         gc.collect()
     
     # Calculate summary statistics
@@ -375,7 +444,8 @@ def run_cross_validation(params: Dict,
         'std_r2': np.std(all_metrics['r2']),
         'min_mae': np.min(all_metrics['mae']),
         'min_rmse': np.min(all_metrics['rmse']),
-        'max_r2': np.max(all_metrics['r2'])
+        'max_r2': np.max(all_metrics['r2']),
+        'median_r2': np.median(all_metrics['r2'])  # Added median as it's more robust to outliers
     }
     
     # Print overall summary
@@ -383,14 +453,140 @@ def run_cross_validation(params: Dict,
     print(f"Avg MAE: {results['summary']['avg_mae']:.4f} ± {results['summary']['std_mae']:.4f}")
     print(f"Avg RMSE: {results['summary']['avg_rmse']:.4f} ± {results['summary']['std_rmse']:.4f}")
     print(f"Avg R²: {results['summary']['avg_r2']:.4f} ± {results['summary']['std_r2']:.4f}")
+    print(f"Median R²: {results['summary']['median_r2']:.4f}")
+    print(f"Max R²: {results['summary']['max_r2']:.4f}")
+    
+    # Generate combined visualization
+    if store_predictions and save_results:
+        create_combined_visualization(results, output_dir)
     
     # Save final summary
     if save_results:
+        # Create a NumPy-safe JSON serializer
+        def convert_numpy_types(obj):
+            if isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            else:
+                return obj
+                
         with open(f"{output_dir}/cv_summary_{int(time.time())}.json", 'w') as f:
-            json.dump(results['summary'], f, indent=2)
+            # Filter out predictions from the results as they're too large
+            summary_results = {k: v for k, v in results.items() if k != 'predictions'}
+            json.dump(summary_results, f, indent=2, default=convert_numpy_types)
     
     return results
 
+
+def create_combined_visualization(results, output_dir):
+    """
+    Create a combined visualization of actual vs predicted values across all rounds.
+    
+    Args:
+        results: Results dictionary with predictions
+        output_dir: Directory to save visualization
+    """
+    try:
+        # Collect all r2 values
+        r2_values = []
+        round_nums = []
+        
+        for round_num, round_data in results['rounds'].items():
+            if 'single_step' in round_data and 'r2' in round_data['single_step']:
+                r2_values.append(round_data['single_step']['r2'])
+                round_nums.append(round_num)
+        
+        # Sort round numbers
+        sorted_indices = np.argsort(round_nums)
+        sorted_rounds = [round_nums[i] for i in sorted_indices]
+        sorted_r2 = [r2_values[i] for i in sorted_indices]
+        
+        # Plot R² values across rounds
+        plt.figure(figsize=(12, 8))
+        
+        plt.subplot(2, 1, 1)
+        plt.bar(sorted_rounds, sorted_r2)
+        plt.axhline(y=0, color='r', linestyle='-', alpha=0.3)
+        plt.xlabel('Round Number')
+        plt.ylabel('R²')
+        plt.title('R² Values Across Cross-Validation Rounds')
+        plt.grid(True, axis='y')
+        
+        # Plot R² distribution (histogram)
+        plt.subplot(2, 1, 2)
+        plt.hist(sorted_r2, bins=20)
+        plt.axvline(x=0, color='r', linestyle='-', alpha=0.3)
+        plt.xlabel('R² Value')
+        plt.ylabel('Frequency')
+        plt.title('Distribution of R² Values')
+        plt.grid(True)
+        
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/r2_distribution.png")
+        plt.close()
+        
+        # Create a combined scatter plot for sample of rounds
+        max_rounds_to_plot = 9  # 3x3 grid
+        sample_rounds = sorted(results['predictions'].keys())
+        
+        if len(sample_rounds) > max_rounds_to_plot:
+            # Select rounds evenly spaced
+            step = len(sample_rounds) // max_rounds_to_plot
+            sample_rounds = sample_rounds[::step][:max_rounds_to_plot]
+        
+        if sample_rounds:
+            rows = int(np.ceil(np.sqrt(len(sample_rounds))))
+            cols = int(np.ceil(len(sample_rounds) / rows))
+            
+            plt.figure(figsize=(15, 10))
+            
+            for i, round_num in enumerate(sample_rounds):
+                if round_num in results['predictions']:
+                    pred_df = results['predictions'][round_num]
+                    r2 = results['rounds'][round_num]['single_step']['r2']
+                    
+                    plt.subplot(rows, cols, i+1)
+                    plt.scatter(pred_df['actual'], pred_df['predicted'], alpha=0.7)
+                    plt.xlabel('Actual')
+                    plt.ylabel('Predicted')
+                    plt.title(f'Round {round_num} (R²={r2:.4f})')
+                    
+                    # Add perfect prediction line
+                    min_val = min(pred_df['actual'].min(), pred_df['predicted'].min())
+                    max_val = max(pred_df['actual'].max(), pred_df['predicted'].max())
+                    plt.plot([min_val, max_val], [min_val, max_val], 'g-', alpha=0.5)
+                    plt.grid(True)
+            
+            plt.tight_layout()
+            plt.savefig(f"{output_dir}/combined_correlation_plots.png")
+            plt.close()
+            
+            # Create time series plots for sample rounds
+            plt.figure(figsize=(15, 10))
+            
+            for i, round_num in enumerate(sample_rounds):
+                if round_num in results['predictions']:
+                    pred_df = results['predictions'][round_num]
+                    mae = results['rounds'][round_num]['single_step']['mae']
+                    
+                    plt.subplot(rows, cols, i+1)
+                    plt.plot(pred_df['timestamp'], pred_df['actual'], 'b-', label='Actual')
+                    plt.plot(pred_df['timestamp'], pred_df['predicted'], 'r--', label='Predicted')
+                    plt.title(f'Round {round_num} (MAE={mae:.4f})')
+                    if i == 0:
+                        plt.legend()
+                    plt.xticks(rotation=45)
+                    plt.grid(True)
+            
+            plt.tight_layout()
+            plt.savefig(f"{output_dir}/combined_time_series_plots.png")
+            plt.close()
+    
+    except Exception as e:
+        print(f"Error creating combined visualization: {str(e)}")
 
 if __name__ == "__main__":
     # Example usage

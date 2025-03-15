@@ -1,0 +1,17 @@
+{
+  "params": {
+    "objective": "reg:squarederror",
+    "n_estimators": 1000,
+    "learning_rate": 0.01,
+    "max_depth": 20,
+    "subsample": 1.0,
+    "colsample_bytree": 1.0,
+    "random_state": 42
+  },
+  "rounds": {
+    "0": {
+      "single_step": {
+        "mae": 3.30303955078125,
+        "rmse": 7.665561789910225,
+        "r2": 0.0,
+        "predictions": 
