@@ -21,3 +21,4 @@ __pycache__/
 
 # Raw data
 src/data/csv/
+src/data/organized/

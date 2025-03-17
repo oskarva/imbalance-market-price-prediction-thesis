@@ -1,105 +1,62 @@
 #!/usr/bin/env python3
 """
-plot_all_predictions.py - Visualize all actual vs predicted values across all cross-validation rounds
+plot_predictions.py - Visualize actual vs predicted values from a single CSV file
 
-This script processes all prediction files in the specified directory, extracts actual and
-predicted values, and creates a combined time series plot of all values in chronological order.
+This script processes a single predictions CSV file, extracts actual and predicted values,
+and creates visualizations to analyze model performance.
 """
 
 import os
-import glob
-import re
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from datetime import datetime
 import numpy as np
+import argparse
 
-def find_prediction_files(directory, pattern="*predictions*.csv"):
-    """Find all prediction files in the specified directory."""
-    search_path = os.path.join(directory, pattern)
-    files = glob.glob(search_path)
-    
-    if not files:
-        raise ValueError(f"No prediction files found in {directory} matching pattern {pattern}")
-    
-    # Extract round number from filenames
-    def extract_round(filename):
-        match = re.search(r'round(\d+)', os.path.basename(filename))
-        if match:
-            return int(match.group(1))
-        return float('inf')  # Files without round number will be processed last
-    
-    # Sort files by round number
-    files.sort(key=extract_round)
-    
-    print(f"Found {len(files)} prediction files")
-    return files
-
-def load_predictions(files, actual_col="actual", predicted_col="predicted", timestamp_col="timestamp"):
-    """Load predictions from all files and combine them in order."""
-    all_data = []
-    
-    for i, file in enumerate(files):
-        try:
-            df = pd.read_csv(file)
-            
-            # Verify required columns exist
-            if actual_col not in df.columns:
-                print(f"Warning: '{actual_col}' column not found in {file}, skipping")
-                continue
+def load_predictions(file_path, actual_col="actual", predicted_col="predicted", timestamp_col="timestamp"):
+    """Load predictions from a single CSV file."""
+    try:
+        df = pd.read_csv(file_path)
+        
+        # Verify required columns exist
+        if actual_col not in df.columns:
+            raise ValueError(f"'{actual_col}' column not found in {file_path}")
                 
-            if predicted_col not in df.columns:
-                print(f"Warning: '{predicted_col}' column not found in {file}, skipping")
-                continue
+        if predicted_col not in df.columns:
+            raise ValueError(f"'{predicted_col}' column not found in {file_path}")
+        
+        # Process timestamps if available
+        if timestamp_col in df.columns:
+            # Parse timestamps
+            df['datetime'] = pd.to_datetime(df[timestamp_col])
+            # Sort data by timestamps
+            df = df.sort_values('datetime')
+        else:
+            # Create artificial timestamps if not available
+            print(f"Warning: No timestamp column in {file_path}, using sequential indices")
+            df['datetime'] = pd.date_range(start='2000-01-01', periods=len(df), freq='H')
+        
+        # Add a sequential index for plotting
+        df['seq_index'] = range(len(df))
+        
+        print(f"Loaded {len(df)} rows from {os.path.basename(file_path)}")
+        return df
             
-            # Add timestamp if available
-            if timestamp_col in df.columns:
-                # Parse timestamps
-                df['datetime'] = pd.to_datetime(df[timestamp_col])
-                df = df.sort_values('datetime')
-            else:
-                # Create artificial timestamps if not available
-                print(f"Warning: No timestamp column in {file}, using sequential indices")
-                df['datetime'] = pd.date_range(start='2000-01-01', periods=len(df), freq='H')
-            
-            # Add round number
-            df['round'] = i
-            df['file'] = os.path.basename(file)
-            
-            all_data.append(df)
-            print(f"Loaded {len(df)} rows from {os.path.basename(file)}")
-            
-        except Exception as e:
-            print(f"Error loading {file}: {str(e)}")
-    
-    if not all_data:
-        raise ValueError("Failed to load any valid prediction data")
-    
-    # Combine all dataframes
-    combined_df = pd.concat(all_data, ignore_index=True)
-    
-    # Sort by datetime if available
-    combined_df = combined_df.sort_values('datetime')
-    
-    return combined_df
+    except Exception as e:
+        raise ValueError(f"Error loading {file_path}: {str(e)}")
 
-def plot_all_predictions(df, actual_col="actual", predicted_col="predicted", output_file="all_predictions.png"):
-    """Create a time series plot of all actual vs predicted values."""
+def plot_predictions(df, actual_col="actual", predicted_col="predicted", output_prefix="prediction"):
+    """Create visualizations for model prediction analysis."""
+    # 1. Time series plot
     plt.figure(figsize=(15, 8))
     
     # Plot actual and predicted values
-    plt.plot(df.index, df[actual_col], 'b-', label='Actual', linewidth=1.5)
-    plt.plot(df.index, df[predicted_col], 'r--', label='Predicted', linewidth=1)
-    
-    # Add vertical lines between rounds
-    for round_end in df[df['round'].diff() == 1].index:
-        plt.axvline(x=round_end, color='gray', linestyle='-', alpha=0.3)
+    plt.plot(df['seq_index'], df[actual_col], 'b-', linewidth=1.5, label='Actual')
+    plt.plot(df['seq_index'], df[predicted_col], 'r--', linewidth=1, label='Predicted')
     
     # Customize plot
     plt.xlabel('Time Sequence')
-    plt.ylabel('Price')
-    plt.title('All Rounds - Actual vs Predicted Values')
+    plt.ylabel('Value')
+    plt.title('Actual vs Predicted Values')
     plt.legend()
     plt.grid(True, alpha=0.3)
     
@@ -107,10 +64,11 @@ def plot_all_predictions(df, actual_col="actual", predicted_col="predicted", out
     plt.tight_layout()
     
     # Save the figure
-    plt.savefig(output_file, dpi=300)
-    print(f"Plot saved to {output_file}")
+    timeseries_file = f"{output_prefix}_timeseries.png"
+    plt.savefig(timeseries_file, dpi=300)
+    print(f"Time series plot saved to {timeseries_file}")
     
-    # Create a second plot for correlation
+    # 2. Correlation plot
     plt.figure(figsize=(10, 10))
     plt.scatter(df[actual_col], df[predicted_col], alpha=0.5)
     
@@ -119,8 +77,15 @@ def plot_all_predictions(df, actual_col="actual", predicted_col="predicted", out
     max_val = max(df[actual_col].max(), df[predicted_col].max())
     plt.plot([min_val, max_val], [min_val, max_val], 'g--')
     
-    # Calculate overall metrics
-    r2 = np.corrcoef(df[actual_col], df[predicted_col])[0, 1] ** 2
+    # Calculate metrics
+    try:
+        r2 = np.corrcoef(df[actual_col], df[predicted_col])[0, 1] ** 2
+        # Check if r2 is NaN (can happen with constant values)
+        if np.isnan(r2):
+            r2 = 0
+    except:
+        r2 = 0  # In case of error, default to 0
+        
     mae = np.mean(np.abs(df[predicted_col] - df[actual_col]))
     rmse = np.sqrt(np.mean((df[predicted_col] - df[actual_col]) ** 2))
     
@@ -131,17 +96,16 @@ def plot_all_predictions(df, actual_col="actual", predicted_col="predicted", out
     
     plt.xlabel('Actual Values')
     plt.ylabel('Predicted Values')
-    plt.title('Overall Correlation Plot - Actual vs Predicted')
+    plt.title('Correlation Plot - Actual vs Predicted')
     plt.grid(True, alpha=0.3)
     
     # Save the correlation plot
-    corr_output_file = "overall_correlation.png"
+    corr_output_file = f"{output_prefix}_correlation.png"
     plt.tight_layout()
     plt.savefig(corr_output_file, dpi=300)
     print(f"Correlation plot saved to {corr_output_file}")
 
-    # Create additional plots for different views of the data
-    # 1. Error distribution histogram
+    # 3. Error distribution histogram
     plt.figure(figsize=(12, 6))
     errors = df[predicted_col] - df[actual_col]
     plt.hist(errors, bins=50, alpha=0.75)
@@ -151,18 +115,22 @@ def plot_all_predictions(df, actual_col="actual", predicted_col="predicted", out
     plt.title('Distribution of Prediction Errors')
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig("error_distribution.png", dpi=300)
+    error_dist_file = f"{output_prefix}_error_distribution.png"
+    plt.savefig(error_dist_file, dpi=300)
+    print(f"Error distribution plot saved to {error_dist_file}")
     
-    # 2. Error over time
+    # 4. Error over time
     plt.figure(figsize=(15, 6))
-    plt.plot(df.index, errors, 'g-', alpha=0.7)
+    plt.plot(df['seq_index'], df[predicted_col] - df[actual_col], 'g-', alpha=0.7)
     plt.axhline(y=0, color='r', linestyle='--')
     plt.xlabel('Time Sequence')
     plt.ylabel('Error (Predicted - Actual)')
     plt.title('Prediction Error Over Time')
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig("error_over_time.png", dpi=300)
+    error_time_file = f"{output_prefix}_error_over_time.png"
+    plt.savefig(error_time_file, dpi=300)
+    print(f"Error over time plot saved to {error_time_file}")
     
     # Return statistics
     return {
@@ -176,26 +144,31 @@ def plot_all_predictions(df, actual_col="actual", predicted_col="predicted", out
     }
 
 def main():
-    """Main function to load and plot all predictions."""
-    # Set the directory containing prediction files
-    data_dir = "results/cv_run_20250314-132254"
+    """Main function to load and plot predictions."""
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description="Visualize actual vs predicted values from a single CSV file")
+    parser.add_argument("file_path", help="Path to the predictions CSV file")
+    parser.add_argument("--actual", default="actual", help="Column name for actual values (default: 'actual')")
+    parser.add_argument("--predicted", default="predicted", help="Column name for predicted values (default: 'predicted')")
+    parser.add_argument("--timestamp", default="timestamp", help="Column name for timestamps (default: 'timestamp')")
+    parser.add_argument("--output", default="prediction", help="Prefix for output files (default: 'prediction')")
     
-    # Find all prediction files
-    try:
-        files = find_prediction_files(data_dir)
-    except ValueError as e:
-        print(f"Error: {str(e)}")
+    args = parser.parse_args()
+    
+    # Check if file exists
+    if not os.path.isfile(args.file_path):
+        print(f"Error: File '{args.file_path}' not found")
         return
     
     # Load predictions
     try:
-        df = load_predictions(files)
+        df = load_predictions(args.file_path, args.actual, args.predicted, args.timestamp)
     except ValueError as e:
         print(f"Error: {str(e)}")
         return
     
     # Plot predictions
-    stats = plot_all_predictions(df)
+    stats = plot_predictions(df, args.actual, args.predicted, args.output)
     
     # Print statistics
     print("\nOverall Statistics:")
