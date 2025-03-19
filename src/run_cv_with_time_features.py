@@ -631,7 +631,7 @@ def main():
     parser.add_argument('--max_depth', type=int, default=6,
                        help='Max depth for XGBoost (default: 6)')
     
-    parser.add_argument('--subsample', type=float, default=0.9,
+    parser.add_argument('--subsample', type=float, default=0.8,
                        help='Subsample ratio for XGBoost (default: 0.9)')
     
     parser.add_argument('--no-time-features', action='store_true',

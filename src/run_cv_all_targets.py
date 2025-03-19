@@ -545,16 +545,16 @@ def main():
     parser.add_argument('--organized-dir', type=str, default='./src/data/organized',
                        help='Base directory for organized files (default: ./src/data/organized)')
     
-    parser.add_argument('--n_estimators', type=int, default=100,
+    parser.add_argument('--n_estimators', type=int, default=500,
                        help='Number of estimators for XGBoost (default: 100)')
     
-    parser.add_argument('--learning_rate', type=float, default=0.01,
+    parser.add_argument('--learning_rate', type=float, default=0.05,
                        help='Learning rate for XGBoost (default: 0.01)')
     
-    parser.add_argument('--max_depth', type=int, default=3,
+    parser.add_argument('--max_depth', type=int, default=6,
                        help='Max depth for XGBoost (default: 3)')
     
-    parser.add_argument('--subsample', type=float, default=0.9,
+    parser.add_argument('--subsample', type=float, default=0.8,
                        help='Subsample ratio for XGBoost (default: 0.9)')
     
     parser.add_argument('--list', action='store_true',

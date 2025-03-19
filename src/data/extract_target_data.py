@@ -172,7 +172,7 @@ def extract_target_prices(area, session, start_date, end_date,
             session=session,
             start_date=start_date,
             end_date=end_date,
-            tags=tags,
+            tags=["50pct"],
             output_dir=output_dir
         )
         
