@@ -5,14 +5,14 @@ import os
 import argparse
 import pandas as pd
 from data.data_collection import get_data
-from data.curves import curve_collections
+from data.curves import get_curve_dicts
 import volue_insight_timeseries
 
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Resume data collection from a specific round')
     
-    parser.add_argument('--start', type=int, required=True,
+    parser.add_argument('--start', type=int, default=0,
                         help='Round number to start from (e.g., 83)')
     
     parser.add_argument('--end', type=int, default=None,
@@ -40,28 +40,30 @@ def main():
     print(f"Data range: {start_date} to {end_date}")
     print(f"Batch size: {args.batch}")
     
-    # Define the curves (assuming this matches your original script)
-    X_curve_names = curve_collections["de"]["X"]
-    target_curve = curve_collections["de"]["mfrr"][0]
-    
-    # Initialize the API session
-    session = volue_insight_timeseries.Session(config_file=os.environ.get("WAPI_CONFIG"))
-    
-    # Call the data collection function with the start round parameter
-    X, y, X_columns, y_columns, n_rounds = get_data(
-        X_curve_names, [target_curve],
-        session,
-        start_date, end_date,
-        curve_collections["de"]["X_to_forecast"],
-        add_time=False, 
-        add_lag=False,
-        add_rolling=False,
-        batch_size=args.batch,
-        start_round=args.start,
-        end_round=args.end
-    )
-    
-    print(f"Data collection completed. {n_rounds} total rounds available.")
+    collections = get_curve_dicts(area="no")
+    for collection in collections:
+        X_curve_names = collection["X"]
+        target_curves = collection["y"]
+        X_to_forecast = collection["X_to_forecast"]
+
+        # Initialize the API session
+        session = volue_insight_timeseries.Session(config_file=os.environ.get("WAPI_CONFIG"))
+
+        # Call the data collection function with the start round parameter
+        X, y, X_columns, y_columns, n_rounds = get_data(
+            X_curve_names, target_curves, collection["sub_area"],
+            session,
+            start_date, end_date,
+            X_to_forecast,
+            add_time=False, 
+            add_lag=False,
+            add_rolling=False,
+            batch_size=args.batch,
+            start_round=args.start,
+            end_round=args.end
+        )
+
+        print(f"Data collection completed for {collection['sub_area']}. {n_rounds} total rounds available.")
 
 if __name__ == "__main__":
     main()

@@ -92,7 +92,7 @@ curve_collections = {
     },
 }
 
-def get_curve_lists(area:str, sub_areas=None):
+def get_curve_dicts(area:str, sub_areas=None):
     """Get lists of curves for specified area and sub-areas.
     
     Parameters:
@@ -129,9 +129,14 @@ def get_curve_lists(area:str, sub_areas=None):
             y_sa[i] = y_sa[i].replace(AREA_STRING, sa)
         
         X_f_sa = curve_collections[area]["X_to_forecast"].copy()
+        X_f_sa_new = {}  # Create a new dictionary
         for key, value in X_f_sa.items():
-            X_f_sa.pop(key)
-            X_f_sa[key.replace(AREA_STRING, sa)] = value.replace(AREA_STRING, sa)
+            new_key = key.replace(AREA_STRING, sa)
+            new_value = value.replace(AREA_STRING, sa)
+            X_f_sa_new[new_key] = new_value
+
+        # Replace the old dictionary with the new one
+        X_f_sa = X_f_sa_new
         
         new_collection = {
             "sub_area":sa,
@@ -142,4 +147,3 @@ def get_curve_lists(area:str, sub_areas=None):
         collections.append(new_collection)
     
     return collections
-

@@ -7,7 +7,7 @@ import gc
 import os
 
 
-def get_data(X_curve_names, y_curve_names, session, start_date, end_date, X_to_forecast,
+def get_data(X_curve_names, y_curve_names, sub_area, session, start_date, end_date, X_to_forecast,
              add_time=False, add_lag=False, add_rolling=False, include_y_in_X=False, 
              lag_value=32, initial_training_set_size=0.8, batch_size=10, 
              start_round=None, end_round=None):
@@ -98,7 +98,7 @@ def get_data(X_curve_names, y_curve_names, session, start_date, end_date, X_to_f
     if start_round is None:
         # Check for existing checkpoint
         import os
-        if os.path.exists("cv_checkpoint.txt"):
+        if os.path.exists("cv_checkpoint.txt") and start_round is None:
             with open("cv_checkpoint.txt", 'r') as f:
                 checkpoint = f.read().strip()
                 if checkpoint.isdigit():
@@ -114,7 +114,7 @@ def get_data(X_curve_names, y_curve_names, session, start_date, end_date, X_to_f
     # Create CV sets starting from the specified round
     n_rounds = create_cross_validation_sets_and_save(
         X_df, y_df, initial_training_set_size, X_to_forecast, 
-        session, crossval_horizon=32, batch_size=batch_size,
+        session, sub_area, crossval_horizon=32, batch_size=batch_size,
         start_round=start_round, end_round=end_round
     )
     
@@ -134,7 +134,7 @@ def get_data(X_curve_names, y_curve_names, session, start_date, end_date, X_to_f
     
     return X, y, X_df.columns.tolist(), y_df.columns.tolist(), total_rounds
 
-def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size, X_to_forecast, session, 
+def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size, X_to_forecast, session, sub_area, 
                                          crossval_horizon=32, batch_size=10, checkpoint_file="cv_checkpoint.txt",
                                          start_round=0, end_round=None):
     """
@@ -168,7 +168,7 @@ def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size,
     print(f"Will process rounds {start_round} to {end_round-1}")
     
     # Create directory if it doesn't exist
-    os.makedirs("./src/data/csv", exist_ok=True)
+    os.makedirs(f"./src/data/csv/{sub_area}", exist_ok=True)
     
     # Use checkpoint file if provided and we're starting from the beginning
     if start_round == 0 and os.path.exists(checkpoint_file):
@@ -184,7 +184,7 @@ def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size,
         
         try:
             # Check if files for this round already exist
-            files_exist = all(os.path.exists(f"./src/data/csv/{prefix}_{i}.csv") 
+            files_exist = all(os.path.exists(f"./src/data/csv/{sub_area}/{prefix}_{i}.csv") 
                              for prefix in ["X_train", "y_train", "X_test", "y_test"])
             
             if files_exist:
@@ -241,10 +241,10 @@ def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size,
             
             # Save to disk
             print(f"Saving cross-validation sets for round {i}")
-            X_train.to_csv(f"./src/data/csv/X_train_{i}.csv", index=True)
-            y_train.to_csv(f"./src/data/csv/y_train_{i}.csv", index=True)
-            X_test.to_csv(f"./src/data/csv/X_test_{i}.csv", index=True)
-            y_test.to_csv(f"./src/data/csv/y_test_{i}.csv", index=True)
+            X_train.to_csv(f"./src/data/csv/{sub_area}/X_train_{i}.csv", index=True)
+            y_train.to_csv(f"./src/data/csv/{sub_area}/y_train_{i}.csv", index=True)
+            X_test.to_csv(f"./src/data/csv/{sub_area}/X_test_{i}.csv", index=True)
+            y_test.to_csv(f"./src/data/csv/{sub_area}/y_test_{i}.csv", index=True)
             
             # Save checkpoint
             with open(checkpoint_file, 'w') as f:
