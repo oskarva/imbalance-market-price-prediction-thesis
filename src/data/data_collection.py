@@ -174,7 +174,7 @@ def create_cross_validation_sets_and_save(X_df, y_df, initial_training_set_size,
     if start_round == 0 and os.path.exists(checkpoint_file):
         with open(checkpoint_file, 'r') as f:
             checkpoint = f.read().strip()
-            if checkpoint.isdigit():
+            if checkpoint.isdigit() and start_round is None:
                 start_round = int(checkpoint)
                 print(f"Resuming from checkpoint: round {start_round}")
     
