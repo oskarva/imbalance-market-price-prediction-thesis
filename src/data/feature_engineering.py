@@ -114,7 +114,6 @@ if __name__ == "__main__":
     df = add_calendar_features(df, 'timestamp')
     
     # Create lag features for 'price' and 'volume'.
-    # Here, we create lags of 1, 2, and 3 time steps (adjust based on your forecasting horizon).
     df = create_lag_features(df, columns=['price', 'volume'], lags=[1, 2, 3])
     
     # Create rolling features (e.g., rolling mean and sum) for 'price'

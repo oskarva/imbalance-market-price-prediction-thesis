@@ -164,7 +164,7 @@ for start in range(0, len(X_test), horizon):
     print(f"[Block {block_count}/{total_blocks}] R²: {block_r2:.3f}, RMSE: {block_rmse:.3f}, MAE: {block_mae:.3f}")
 
     # Update the training set by appending the test block.
-    # In a real-world scenario, you would only append the new actual data.
+    # In a real-world scenario, would only append the new actual data.
     # Here we append both features and multi-step labels for this block.
     current_train_features = np.concatenate([current_train_features, block_X], axis=0)
     current_train_labels = np.concatenate([current_train_labels, block_Y], axis=0)

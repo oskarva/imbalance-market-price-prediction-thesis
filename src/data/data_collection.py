@@ -119,7 +119,7 @@ def get_data(X_curve_names, y_curve_names, sub_area, session, start_date, end_da
     )
     
     # Convert to numpy arrays - but only return a subset to save memory
-    # You probably don't need the full array for immediate use
+    # probably don't need the full array for immediate use
     sample_size = min(10000, len(X_df))
     X = X_df.iloc[:sample_size].to_numpy()
     y = y_df.iloc[:sample_size].to_numpy()

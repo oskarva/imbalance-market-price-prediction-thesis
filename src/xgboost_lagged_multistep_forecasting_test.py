@@ -7,7 +7,7 @@ import xgboost as xgb
 from sklearn.multioutput import MultiOutputRegressor
 import matplotlib.pyplot as plt
 
-# Import your data collection functions and feature engineering methods.
+# Import data collection functions and feature engineering methods.
 from data.data_collection import _get_data
 from data.curves import curve_collections
 import volue_insight_timeseries
@@ -18,7 +18,7 @@ start_date = pd.Timestamp("2021-01-01")
 end_date = pd.Timestamp.today()
 session = volue_insight_timeseries.Session(config_file=os.environ.get("WAPI_CONFIG"))
 
-# Define your curve names.
+# Define curve names.
 X_curve_names = curve_collections["de"]["X"]
 y_curve_names = [curve_collections["de"]["mfrr"][0]]
 all_curve_names = X_curve_names + y_curve_names

@@ -17,7 +17,7 @@ start_date = pd.Timestamp("2021-01-01")
 end_date = pd.Timestamp.today()
 session = volue_insight_timeseries.Session(config_file=os.environ.get("WAPI_CONFIG"))
 
-# Define your curve names (using your provided collections)
+# Define curve names (using provided collections)
 X_curve_names = curve_collections["de"]["X"]
 y_curve_names = [curve_collections["de"]["mfrr"][0]]
 
@@ -27,7 +27,7 @@ X, y, X_col, _ = get_data(X_curve_names, y_curve_names, session, start_date, end
 # Ensure y is a 1D array
 y = np.array(y).ravel()
 
-# Optionally, scale your features
+# Optionally, scale features
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 

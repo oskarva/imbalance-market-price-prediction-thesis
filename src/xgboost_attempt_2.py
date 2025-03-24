@@ -335,7 +335,7 @@ import time
 # Function to create lag features (in case we need to recreate them during retraining)
 def prepare_features(X, y, lag=32):
     # Keep track of any feature creation logic here
-    # This function might be needed if you need to recreate features during retraining
+    # This function might be needed if need to recreate features during retraining
     return X, y
 
 # Implement the rolling origin forecast evaluation

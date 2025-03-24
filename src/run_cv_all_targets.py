@@ -12,7 +12,7 @@ import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
 
-def get_available_targets(organized_dir="./src/data/organized"):
+def get_available_targets(organized_dir="./src/data/csv", areas=["no1", "no2", "no3", "no4", "no5"]):
     """
     Get list of available targets from the organized directory structure.
     
@@ -26,19 +26,12 @@ def get_available_targets(organized_dir="./src/data/organized"):
     
     # Look for subdirectories that contain y_train and y_test files
     for item in os.listdir(organized_dir):
-        dir_path = os.path.join(organized_dir, item)
-        
-        # Skip if not a directory or if it's the X_files directory
-        if not os.path.isdir(dir_path) or item == "X_files":
-            continue
-        
-        # Check if directory contains y_train files
-        if any(f.startswith('y_train_') for f in os.listdir(dir_path)):
+        if item in areas:
             targets.append(item)
     
     return targets
 
-def load_cv_round(cv_round, target_dir, x_files_dir):
+def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0):
     """
     Load a specific cross-validation round's data for a target.
     
@@ -46,9 +39,11 @@ def load_cv_round(cv_round, target_dir, x_files_dir):
         cv_round: The cross-validation round number to load
         target_dir: Directory containing target-specific files
         x_files_dir: Directory containing X files
+        target_index: Index (0-based) for which target column to return if multiple targets exist
         
     Returns:
-        Tuple containing (X_train, y_train, X_test, y_test) as pandas DataFrames
+        Tuple containing (X_train, y_train, X_test, y_test) as pandas DataFrames or Series.
+        y_train and y_test will be the selected target column.
     """
     try:
         # Load X data
@@ -65,10 +60,19 @@ def load_cv_round(cv_round, target_dir, x_files_dir):
         y_train.index = pd.to_datetime(y_train.index, utc=True)
         y_test.index = pd.to_datetime(y_test.index, utc=True)
         
+        # If y_train is a DataFrame with multiple columns, select the column based on target_index.
+        if isinstance(y_train, pd.DataFrame):
+            if y_train.shape[1] > 1:
+                y_train = y_train.iloc[:, target_index]
+                y_test = y_test.iloc[:, target_index]
+            else:
+                # If there is only one column, simply squeeze to a Series.
+                y_train = y_train.squeeze()
+                y_test = y_test.squeeze()
+        
         return X_train, y_train, X_test, y_test
-    
-    except FileNotFoundError as e:
-        print(f"Could not load cross-validation round {cv_round}: {str(e)}")
+    except Exception as e:
+        print(f"Error loading CV round {cv_round}: {e}")
         raise
 
 def get_cv_round_count(target_dir):
@@ -109,9 +113,16 @@ def train_and_evaluate(X_train, y_train, X_test, y_test, params):
     Returns:
         Dictionary with evaluation metrics and model
     """
-    # Extract target values as 1D arrays
-    y_train_vals = y_train.iloc[:, 0].values
-    y_test_vals = y_test.iloc[:, 0].values
+    # Handle whether y_train/y_test are Series or DataFrame
+    if isinstance(y_train, pd.DataFrame):
+        y_train_vals = y_train.iloc[:, 0].values
+    else:  # It's a Series
+        y_train_vals = y_train.values
+        
+    if isinstance(y_test, pd.DataFrame):
+        y_test_vals = y_test.iloc[:, 0].values
+    else:  # It's a Series
+        y_test_vals = y_test.values
     
     # Check for and handle NaN or infinity values in training data
     is_valid_train = ~(np.isnan(y_train_vals) | np.isinf(y_train_vals) | (np.abs(y_train_vals) > 1e10))
@@ -193,7 +204,7 @@ def train_and_evaluate(X_train, y_train, X_test, y_test, params):
 
 def run_cv_for_target(target, start_round=0, end_round=None, step=1,
                      model_params=None, output_dir=None,
-                     organized_dir="./src/data/organized"):
+                     organized_dir="./src/data/csv"):
     """
     Run cross-validation for a specific target with overall R² calculation.
     
@@ -211,7 +222,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
     """
     # Set up paths
     target_dir = os.path.join(organized_dir, target)
-    x_files_dir = os.path.join(organized_dir, "X_files")
+    x_files_dir = os.path.join(organized_dir, target)
     
     # Check if target directory exists
     if not os.path.isdir(target_dir):
@@ -221,21 +232,17 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
     if model_params is None:
         model_params = {
             'objective': 'reg:squarederror',
-            'n_estimators': 100,
-            'learning_rate': 0.01,
-            'max_depth': 3,
-            'subsample': 0.9,
+            'n_estimators': 1000,
+            'learning_rate': 0.05,
+            'max_depth': 10,
+            'subsample': 1,
             'colsample_bytree': 0.9,
             'random_state': 42
         }
     
     # Set up output directory with timestamp
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    if output_dir is None:
-        output_dir = f"./results/{target}_run_{timestamp}"
     
-    # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
     
     # Get total number of rounds
     total_rounds = get_cv_round_count(target_dir)
@@ -256,11 +263,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
         'timestamp': timestamp
     }
     
-    with open(os.path.join(output_dir, 'config.json'), 'w') as f:
-        json.dump(config, f, indent=4)
-    
     print(f"\nRunning cross-validation for target: {target}")
-    print(f"Output directory: {output_dir}")
     print(f"Rounds: {start_round} to {end_round-1} with step {step}")
     print(f"Total rounds available: {total_rounds}")
     print(f"Model parameters: {model_params}")
@@ -278,98 +281,106 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
     round_results = {}
     successful_rounds = 0
     failed_rounds = 0
+    for ind in [0,1]:
+        if output_dir is None:
+            output_dir = f"./results/{target}_run_{timestamp}_ind_{ind}"
     
-    for round_num in range(start_round, end_round, step):
-        print(f"\nProcessing round {round_num}...")
-        
-        try:
-            # Load data for this round
-            X_train, y_train, X_test, y_test = load_cv_round(
-                cv_round=round_num,
-                target_dir=target_dir,
-                x_files_dir=x_files_dir
-            )
-            
-            # Train and evaluate model
-            result = train_and_evaluate(
-                X_train=X_train,
-                y_train=y_train,
-                X_test=X_test,
-                y_test=y_test,
-                params=model_params
-            )
-            
-            # Check if we skipped this round due to not enough valid data
-            if result['model'] is None:
-                print(f"  Skipping round {round_num} due to insufficient valid data.")
+        # Create output directory
+        os.makedirs(output_dir, exist_ok=True)
+        with open(os.path.join(output_dir, 'config.json'), 'w') as f:
+            json.dump(config, f, indent=4)
+        for round_num in range(start_round, end_round, step):
+            print(f"\nProcessing round {round_num}...")
+
+            try:
+                # Load data for this round
+                X_train, y_train, X_test, y_test = load_cv_round(
+                    cv_round=round_num,
+                    target_dir=target_dir,
+                    x_files_dir=x_files_dir,
+                    target_index=ind
+                )
+
+                # Train and evaluate model
+                result = train_and_evaluate(
+                    X_train=X_train,
+                    y_train=y_train,
+                    X_test=X_test,
+                    y_test=y_test,
+                    params=model_params
+                )
+
+                # Check if we skipped this round due to not enough valid data
+                if result['model'] is None:
+                    print(f"  Skipping round {round_num} due to insufficient valid data.")
+                    failed_rounds += 1
+                    continue
+                
+                # Add round number to predictions
+                result['predictions']['round'] = round_num
+
+                # Store results
+                round_results[round_num] = result['metrics']
+
+                # Update tracking metrics
+                all_metrics['mae'].append(result['metrics']['mae'])
+                all_metrics['rmse'].append(result['metrics']['rmse'])
+
+                # Add to all predictions for overall R² calculation
+                all_predictions.append(result['predictions'])
+
+                # Print round results
+                print(f"  MAE: {result['metrics']['mae']:.4f}")
+                print(f"  RMSE: {result['metrics']['rmse']:.4f}")
+
+                if 'rows_removed' in result:
+                    print(f"  Rows removed: {result['rows_removed']['train']} train, {result['rows_removed']['test']} test")
+
+                # Save predictions
+                pred_df = result['predictions']
+                pred_df.to_csv(os.path.join(output_dir, f"round_{round_num}_predictions.csv"), index=False)
+
+                # Create and save plot
+                plt.figure(figsize=(12, 6))
+
+                # Plot actual vs predicted values
+                plt.subplot(1, 2, 1)
+                plt.plot(pred_df['timestamp'], pred_df['actual'], 'b-', label='Actual')
+                plt.plot(pred_df['timestamp'], pred_df['predicted'], 'r--', label='Predicted')
+                plt.title(f'Round {round_num} - Actual vs Predicted')
+                plt.ylabel('Price')
+                plt.legend()
+                plt.xticks(rotation=45)
+                plt.grid(True)
+
+                # Scatter plot to visualize correlation
+                plt.subplot(1, 2, 2)
+                plt.scatter(pred_df['actual'], pred_df['predicted'])
+                plt.xlabel('Actual')
+                plt.ylabel('Predicted')
+
+                # Calculate round-specific R² for the plot title only
+                if np.var(pred_df['actual']) > 0:
+                    r2 = r2_score(pred_df['actual'], pred_df['predicted'])
+                    plt.title(f'Round {round_num} Correlation (R² = {r2:.4f})')
+                else:
+                    plt.title(f'Round {round_num} Correlation (R² undefined)')
+
+                min_val = min(pred_df['actual'].min(), pred_df['predicted'].min())
+                max_val = max(pred_df['actual'].max(), pred_df['predicted'].max())
+                plt.plot([min_val, max_val], [min_val, max_val], 'g-', alpha=0.5)  # Perfect prediction line
+                plt.grid(True)
+
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, f"round_{round_num}_plot.png"))
+                plt.close()
+
+                successful_rounds += 1
+
+            except Exception as e:
+                print(f"Error processing round {round_num}: {str(e)}")
                 failed_rounds += 1
                 continue
-            
-            # Add round number to predictions
-            result['predictions']['round'] = round_num
-            
-            # Store results
-            round_results[round_num] = result['metrics']
-            
-            # Update tracking metrics
-            all_metrics['mae'].append(result['metrics']['mae'])
-            all_metrics['rmse'].append(result['metrics']['rmse'])
-            
-            # Add to all predictions for overall R² calculation
-            all_predictions.append(result['predictions'])
-            
-            # Print round results
-            print(f"  MAE: {result['metrics']['mae']:.4f}")
-            print(f"  RMSE: {result['metrics']['rmse']:.4f}")
-            
-            if 'rows_removed' in result:
-                print(f"  Rows removed: {result['rows_removed']['train']} train, {result['rows_removed']['test']} test")
-            
-            # Save predictions
-            pred_df = result['predictions']
-            pred_df.to_csv(os.path.join(output_dir, f"round_{round_num}_predictions.csv"), index=False)
-            
-            # Create and save plot
-            plt.figure(figsize=(12, 6))
-            
-            # Plot actual vs predicted values
-            plt.subplot(1, 2, 1)
-            plt.plot(pred_df['timestamp'], pred_df['actual'], 'b-', label='Actual')
-            plt.plot(pred_df['timestamp'], pred_df['predicted'], 'r--', label='Predicted')
-            plt.title(f'Round {round_num} - Actual vs Predicted')
-            plt.ylabel('Price')
-            plt.legend()
-            plt.xticks(rotation=45)
-            plt.grid(True)
-            
-            # Scatter plot to visualize correlation
-            plt.subplot(1, 2, 2)
-            plt.scatter(pred_df['actual'], pred_df['predicted'])
-            plt.xlabel('Actual')
-            plt.ylabel('Predicted')
-            
-            # Calculate round-specific R² for the plot title only
-            if np.var(pred_df['actual']) > 0:
-                r2 = r2_score(pred_df['actual'], pred_df['predicted'])
-                plt.title(f'Round {round_num} Correlation (R² = {r2:.4f})')
-            else:
-                plt.title(f'Round {round_num} Correlation (R² undefined)')
-            
-            min_val = min(pred_df['actual'].min(), pred_df['predicted'].min())
-            max_val = max(pred_df['actual'].max(), pred_df['predicted'].max())
-            plt.plot([min_val, max_val], [min_val, max_val], 'g-', alpha=0.5)  # Perfect prediction line
-            plt.grid(True)
-            
-            plt.tight_layout()
-            plt.savefig(os.path.join(output_dir, f"round_{round_num}_plot.png"))
-            plt.close()
-            
-            successful_rounds += 1
-            
-        except Exception as e:
-            print(f"Error processing round {round_num}: {str(e)}")
-            failed_rounds += 1
-            continue
     
     # Check if we have any successful rounds
     if not all_metrics['mae']:
@@ -542,8 +553,8 @@ def main():
     parser.add_argument('--output', type=str, default='./results',
                        help='Base directory to save results (default: ./results)')
     
-    parser.add_argument('--organized-dir', type=str, default='./src/data/organized',
-                       help='Base directory for organized files (default: ./src/data/organized)')
+    parser.add_argument('--organized-dir', type=str, default='./src/data/csv',
+                       help='Base directory for organized files (default: ./src/data/csv)')
     
     parser.add_argument('--n_estimators', type=int, default=500,
                        help='Number of estimators for XGBoost (default: 100)')
@@ -576,7 +587,7 @@ def main():
                 print(f"  {target} (Error: {str(e)})")
         
         if not args.target:
-            return
+            None
     
     # Configure model parameters
     model_params = {

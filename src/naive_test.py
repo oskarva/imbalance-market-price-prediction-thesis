@@ -7,7 +7,7 @@ from data.curves import curve_collections
 from data.data_collection import get_data
 import matplotlib.pyplot as plt
 
-# Import (or define) your naive model.
+# Import (or define) naive model.
 from models.naive import Naive_Last_Known_Activation_Price
 
 # ---------------------------
@@ -24,7 +24,7 @@ start_date = pd.Timestamp("2024-06-06")
 end_date = pd.Timestamp.today()
 session = volue_insight_timeseries.Session(config_file=os.environ.get("WAPI_CONFIG"))
 
-# Define the curve names (using your provided collections)
+# Define the curve names (using provided collections)
 X_curve_names = curve_collections["de"]["X"]
 y_curve_names = [curve_collections["de"]["mfrr"][0]]
 

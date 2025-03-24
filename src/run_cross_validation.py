@@ -26,8 +26,8 @@ def main():
     parser.add_argument('--n_estimators', type=int, default=1000,
                         help='Number of estimators for XGBoost (default: 1000)')
     
-    parser.add_argument('--learning_rate', type=float, default=0.01,
-                        help='Learning rate for XGBoost (default: 0.01)')
+    parser.add_argument('--learning_rate', type=float, default=0.05,
+                        help='Learning rate for XGBoost (default: 0.05)')
     
     parser.add_argument('--max_depth', type=int, default=20,
                         help='Max depth for XGBoost (default: 20)')

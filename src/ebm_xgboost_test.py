@@ -22,7 +22,7 @@ print("Current soft limit:", soft)
 print("Current hard limit:", hard)
 
 # Set the new limit to 4GB for both soft and (if allowed) hard limits
-# Note: On some systems, you might not be allowed to set the hard limit lower than it is.
+# Note: On some systems, one might not be allowed to set the hard limit lower than it is.
 try:
     resource.setrlimit(resource.RLIMIT_AS, (four_gb, hard))
     print("Memory limit set to 4GB.")
@@ -36,7 +36,7 @@ start_date = pd.Timestamp("2023-01-01")
 end_date = pd.Timestamp.today()
 session = volue_insight_timeseries.Session(config_file=os.environ.get("WAPI_CONFIG"))
 
-# Define your curve names
+# Define curve names
 X_curve_names = curve_collections["de"]["X"]
 y_curve_names = [curve_collections["de"]["mfrr"][0]]
 
