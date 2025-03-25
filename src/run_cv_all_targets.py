@@ -541,7 +541,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
 def main():
     parser = argparse.ArgumentParser(description='Run cross-validation with overall R² calculation')
     
-    parser.add_argument('--target', type=str, default=None,
+    parser.add_argument('--targets', type=str, default=None,
                        help='Target to process (default: show available targets)')
     
     parser.add_argument('--start', type=int, default=0,
@@ -574,12 +574,15 @@ def main():
     parser.add_argument('--list', action='store_true',
                        help='List available targets and exit')
     
+    parser.add_argument('--objective', type=str, default='reg:squarederror',
+                        help='Objective function for XGBoost (default: reg:squarederror)')
+    
     args = parser.parse_args()
     
     # Get available targets
     available_targets = get_available_targets(args.organized_dir)
     
-    if args.list or not available_targets or args.target is None:
+    if args.list or not available_targets:
         print("\nAvailable targets:")
         for target in available_targets:
             target_dir = os.path.join(args.organized_dir, target)
@@ -589,12 +592,11 @@ def main():
             except Exception as e:
                 print(f"  {target} (Error: {str(e)})")
         
-        if not args.target:
-            None
+
     
     # Configure model parameters
     model_params = {
-        'objective': 'reg:squarederror',
+        'objective': args.objective,
         'n_estimators': args.n_estimators,
         'learning_rate': args.learning_rate,
         'max_depth': args.max_depth,
@@ -604,23 +606,24 @@ def main():
     }
     
     # Run for a specific target if provided, otherwise run for all available targets
-    if args.target:
-        if args.target not in available_targets:
-            print(f"Target '{args.target}' not found in available targets.")
-            print("Available targets:")
-            for target in available_targets:
-                print(f"  {target}")
-            return
-        
-        # Run CV for the specified target
-        run_cv_for_target(
-            target=args.target,
-            start_round=args.start,
-            end_round=args.end,
-            step=args.step,
-            model_params=model_params,
-            organized_dir=args.organized_dir
-        )
+    if args.targets:
+        for t in args.targets.split(','):
+            if t not in available_targets:
+                print(f"Target '{args.targets}' not found in available targets.")
+                print("Available targets:")
+                for target in available_targets:
+                    print(f"  {target}")
+                return
+
+            # Run CV for the specified target
+            run_cv_for_target(
+                target=t,
+                start_round=args.start,
+                end_round=args.end,
+                step=args.step,
+                model_params=model_params,
+                organized_dir=args.organized_dir
+            )
     else:
         # Run for all available targets
         for target in available_targets:
