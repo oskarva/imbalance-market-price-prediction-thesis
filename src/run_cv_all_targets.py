@@ -1,5 +1,6 @@
 """
-Script to run cross-validation with overall R² calculation across all predictions.
+Enhanced script to run cross-validation with overall R² calculation across all predictions.
+Added parameter optimization capabilities and target index selection.
 """
 import os
 import argparse
@@ -11,6 +12,8 @@ from pathlib import Path
 import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
+import optuna
+from functools import partial
 
 def get_available_targets(organized_dir="./src/data/csv", areas=["no1", "no2", "no3", "no4", "no5"]):
     """
@@ -204,7 +207,7 @@ def train_and_evaluate(X_train, y_train, X_test, y_test, params):
 
 def run_cv_for_target(target, start_round=0, end_round=None, step=1,
                      model_params=None, output_dir=None,
-                     organized_dir="./src/data/csv"):
+                     organized_dir="./src/data/csv", target_index=0):
     """
     Run cross-validation for a specific target with overall R² calculation.
     
@@ -216,6 +219,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
         model_params: Parameters for the model
         output_dir: Directory to save results
         organized_dir: Base directory for organized files
+        target_index: Index of target variable (0 or 1) for regulation up/down
         
     Returns:
         Dictionary with results summary
@@ -243,6 +247,331 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
     # Set up output directory with timestamp
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     
+    # Get total number of rounds
+    total_rounds = get_cv_round_count(target_dir)
+    
+    # Set default end_round if not provided
+    if end_round is None:
+        end_round = total_rounds
+    else:
+        end_round = min(end_round, total_rounds)
+    
+    # Create a unique directory for the run
+    if output_dir is None:
+        index_output_dir = f"./results/{target}_run_{timestamp}_ind_{target_index}"
+    else:
+        # If output_dir is provided, append the index
+        index_output_dir = f"{output_dir}_ind_{target_index}"
+    
+    # Create output directory
+    os.makedirs(index_output_dir, exist_ok=True)
+    
+    # Save configuration
+    config = {
+        'target': target,
+        'start_round': start_round,
+        'end_round': end_round,
+        'step': step,
+        'model_params': model_params,
+        'timestamp': timestamp,
+        'target_index': target_index
+    }
+    
+    with open(os.path.join(index_output_dir, 'config.json'), 'w') as f:
+        json.dump(config, f, indent=4)
+    
+    print(f"\nRunning cross-validation for target: {target}, index: {target_index}")
+    print(f"Rounds: {start_round} to {end_round-1} with step {step}")
+    print(f"Total rounds available: {total_rounds}")
+    print(f"Model parameters: {model_params}")
+
+    # Track metrics across all rounds
+    all_metrics = {
+        'mae': [],
+        'rmse': []
+    }
+
+    # Track all predictions for overall R² calculation
+    all_predictions = []
+
+    # Process each round
+    round_results = {}
+    successful_rounds = 0
+    failed_rounds = 0
+
+    for round_num in range(start_round, end_round, step):
+        print(f"\nProcessing round {round_num}...")
+
+        try:
+            # Load data for this round
+            X_train, y_train, X_test, y_test = load_cv_round(
+                cv_round=round_num,
+                target_dir=target_dir,
+                x_files_dir=x_files_dir,
+                target_index=target_index
+            )
+
+            # Train and evaluate model
+            result = train_and_evaluate(
+                X_train=X_train,
+                y_train=y_train,
+                X_test=X_test,
+                y_test=y_test,
+                params=model_params
+            )
+
+            # Check if we skipped this round due to not enough valid data
+            if result['model'] is None:
+                print(f"  Skipping round {round_num} due to insufficient valid data.")
+                failed_rounds += 1
+                continue
+            
+            # Add round number to predictions
+            result['predictions']['round'] = round_num
+
+            # Store results
+            round_results[round_num] = result['metrics']
+
+            # Update tracking metrics
+            all_metrics['mae'].append(result['metrics']['mae'])
+            all_metrics['rmse'].append(result['metrics']['rmse'])
+
+            # Add to all predictions for overall R² calculation
+            all_predictions.append(result['predictions'])
+
+            # Print round results
+            print(f"  MAE: {result['metrics']['mae']:.4f}")
+            print(f"  RMSE: {result['metrics']['rmse']:.4f}")
+
+            if 'rows_removed' in result:
+                print(f"  Rows removed: {result['rows_removed']['train']} train, {result['rows_removed']['test']} test")
+
+            # Save predictions
+            pred_df = result['predictions']
+            pred_df.to_csv(os.path.join(index_output_dir, f"round_{round_num}_predictions.csv"), index=False)
+
+            # Create and save plot
+            plt.figure(figsize=(12, 6))
+
+            # Plot actual vs predicted values
+            plt.subplot(1, 2, 1)
+            plt.plot(pred_df['timestamp'], pred_df['actual'], 'b-', label='Actual')
+            plt.plot(pred_df['timestamp'], pred_df['predicted'], 'r--', label='Predicted')
+            plt.title(f'Round {round_num} - Actual vs Predicted')
+            plt.ylabel('Price')
+            plt.legend()
+            plt.xticks(rotation=45)
+            plt.grid(True)
+
+            # Scatter plot to visualize correlation
+            plt.subplot(1, 2, 2)
+            plt.scatter(pred_df['actual'], pred_df['predicted'])
+            plt.xlabel('Actual')
+            plt.ylabel('Predicted')
+
+            # Calculate round-specific R² for the plot title only
+            if np.var(pred_df['actual']) > 0:
+                r2 = r2_score(pred_df['actual'], pred_df['predicted'])
+                plt.title(f'Round {round_num} Correlation (R² = {r2:.4f})')
+            else:
+                plt.title(f'Round {round_num} Correlation (R² undefined)')
+
+            min_val = min(pred_df['actual'].min(), pred_df['predicted'].min())
+            max_val = max(pred_df['actual'].max(), pred_df['predicted'].max())
+            plt.plot([min_val, max_val], [min_val, max_val], 'g-', alpha=0.5)  # Perfect prediction line
+            plt.grid(True)
+
+            plt.tight_layout()
+            plt.savefig(os.path.join(index_output_dir, f"round_{round_num}_plot.png"))
+            plt.close()
+
+            successful_rounds += 1
+
+        except Exception as e:
+            print(f"Error processing round {round_num}: {str(e)}")
+            failed_rounds += 1
+            continue
+    
+    # Check if we have any successful rounds
+    if not all_metrics['mae']:
+        print(f"No successful rounds for target {target}. All {failed_rounds} rounds failed.")
+
+        # Save a minimal summary
+        summary = {
+            'processed_rounds': failed_rounds + successful_rounds,
+            'successful_rounds': successful_rounds,
+            'failed_rounds': failed_rounds,
+            'error': "All rounds failed"
+        }
+
+        with open(os.path.join(index_output_dir, 'summary.json'), 'w') as f:
+            json.dump(summary, f, indent=4)
+
+        return summary
+
+    # Combine all predictions for overall R² calculation
+    if all_predictions:
+        combined_predictions = pd.concat(all_predictions, ignore_index=True)
+
+        # Calculate overall R² on all predictions combined
+        overall_actual = combined_predictions['actual'].values
+        overall_predicted = combined_predictions['predicted'].values
+
+        # Handle potential division by zero in R² calculation
+        if np.var(overall_actual) > 0:
+            overall_r2 = r2_score(overall_actual, overall_predicted)
+        else:
+            overall_r2 = float('nan')
+            print("Warning: Zero variance in combined actual values, overall R² is undefined")
+
+        # Save combined predictions
+        combined_predictions.to_csv(os.path.join(index_output_dir, "all_predictions.csv"), index=False)
+
+        # Create overall correlation plot
+        plt.figure(figsize=(10, 8))
+        plt.scatter(overall_actual, overall_predicted, alpha=0.5)
+        plt.xlabel('Actual Values')
+        plt.ylabel('Predicted Values')
+
+        if not np.isnan(overall_r2):
+            plt.title(f'Overall Correlation (R² = {overall_r2:.4f})')
+        else:
+            plt.title('Overall Correlation (R² undefined)')
+
+        min_val = min(overall_actual.min(), overall_predicted.min())
+        max_val = max(overall_actual.max(), overall_predicted.max())
+        plt.plot([min_val, max_val], [min_val, max_val], 'g-', alpha=0.5)
+        plt.grid(True)
+
+        # Add summary statistics to plot
+        overall_mae = mean_absolute_error(overall_actual, overall_predicted)
+        overall_rmse = np.sqrt(mean_squared_error(overall_actual, overall_predicted))
+
+        stats_text = (
+            f"Overall Statistics:\n"
+            f"MAE: {overall_mae:.4f}\n"
+            f"RMSE: {overall_rmse:.4f}\n"
+            f"R²: {overall_r2:.4f}\n"
+            f"Samples: {len(overall_actual)}"
+        )
+
+        plt.figtext(0.15, 0.8, stats_text, fontsize=12, 
+                   bbox=dict(facecolor='white', alpha=0.8))
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(index_output_dir, "overall_correlation.png"))
+        plt.close()
+    else:
+        overall_r2 = float('nan')
+        overall_mae = float('nan')
+        overall_rmse = float('nan')
+
+    # Calculate summary statistics
+    summary = {
+        'avg_mae': np.mean(all_metrics['mae']),
+        'avg_rmse': np.mean(all_metrics['rmse']),
+        'std_mae': np.std(all_metrics['mae']),
+        'std_rmse': np.std(all_metrics['rmse']),
+        'min_mae': np.min(all_metrics['mae']),
+        'overall_r2': overall_r2,
+        'overall_mae': overall_mae,
+        'overall_rmse': overall_rmse,
+        'processed_rounds': failed_rounds + successful_rounds,
+        'successful_rounds': successful_rounds,
+        'failed_rounds': failed_rounds
+    }
+
+    # Print summary
+    print("\nCross-validation summary:")
+    print(f"Processed {summary['processed_rounds']} rounds ({summary['successful_rounds']} successful, {summary['failed_rounds']} failed)")
+    print(f"Avg MAE: {summary['avg_mae']:.4f} ± {summary['std_mae']:.4f}")
+    print(f"Avg RMSE: {summary['avg_rmse']:.4f} ± {summary['std_rmse']:.4f}")
+    print(f"Overall R² (calculated on all predictions): {summary['overall_r2']:.4f}")
+    print(f"Overall MAE: {summary['overall_mae']:.4f}")
+    print(f"Overall RMSE: {summary['overall_rmse']:.4f}")
+
+    # Create MAE/RMSE summary plots
+    if round_results:
+        plt.figure(figsize=(12, 5))
+
+        # Plot MAE across rounds
+        plt.subplot(1, 2, 1)
+        rounds = list(round_results.keys())
+        mae_values = [round_results[r]['mae'] for r in rounds]
+        plt.bar(rounds, mae_values)
+        plt.axhline(y=overall_mae, color='r', linestyle='-', label=f'Overall MAE: {overall_mae:.4f}')
+        plt.xlabel('Round Number')
+        plt.ylabel('MAE')
+        plt.title('MAE Values Across Rounds')
+        plt.grid(True, axis='y')
+        plt.legend()
+
+        # Plot RMSE across rounds
+        plt.subplot(1, 2, 2)
+        rmse_values = [round_results[r]['rmse'] for r in rounds]
+        plt.bar(rounds, rmse_values)
+        plt.axhline(y=overall_rmse, color='r', linestyle='-', label=f'Overall RMSE: {overall_rmse:.4f}')
+        plt.xlabel('Round Number')
+        plt.ylabel('RMSE')
+        plt.title('RMSE Values Across Rounds')
+        plt.grid(True, axis='y')
+        plt.legend()
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(index_output_dir, "metrics_summary.png"))
+        plt.close()
+
+    # Save summary to file
+    with open(os.path.join(index_output_dir, 'summary.json'), 'w') as f:
+        # Convert numpy values to regular Python types for JSON serialization
+        summary_json = {k: float(v) if isinstance(v, (np.floating, float)) and not np.isnan(v) else 
+                          None if isinstance(v, (np.floating, float)) and np.isnan(v) else v 
+                          for k, v in summary.items()}
+        json.dump(summary_json, f, indent=4)
+
+    # Save individual round results
+    with open(os.path.join(index_output_dir, 'round_results.json'), 'w') as f:
+        # Convert to regular Python types
+        round_results_json = {}
+        for round_num, metrics in round_results.items():
+            round_results_json[str(round_num)] = {
+                k: float(v) if isinstance(v, np.floating) else v 
+                for k, v in metrics.items()
+            }
+        json.dump(round_results_json, f, indent=4)
+
+    return {
+        'summary': summary,
+        'round_results': round_results
+    }
+
+def optimize_parameters_for_target(target, start_round=0, end_round=None, step=1,
+                              organized_dir="./src/data/csv", target_index=0, 
+                              n_trials=50, evaluation_rounds=None, metric='r2'):
+    """
+    Optimize hyperparameters for a specific target using Optuna.
+    
+    Args:
+        target: Target directory name
+        start_round: First CV round to process
+        end_round: Last CV round to process (None = all available)
+        step: Step size for processing rounds
+        organized_dir: Base directory for organized files
+        target_index: Index of target variable (0 or 1) for regulation up/down
+        n_trials: Number of optimization trials
+        evaluation_rounds: Number of rounds to use for evaluation (None = all rounds)
+        metric: Metric to optimize ('r2', 'mae', or 'rmse')
+        
+    Returns:
+        Dictionary with optimized parameters and study results
+    """
+    # Set up paths
+    target_dir = os.path.join(organized_dir, target)
+    x_files_dir = os.path.join(organized_dir, target)
+    
+    # Check if target directory exists
+    if not os.path.isdir(target_dir):
+        raise ValueError(f"Target directory not found: {target_dir}")
     
     # Get total number of rounds
     total_rounds = get_cv_round_count(target_dir)
@@ -253,296 +582,214 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
     else:
         end_round = min(end_round, total_rounds)
     
-    for ind in [0,1]:
-        # Save configuration
-        config = {
-            'target': target,
-            'start_round': start_round,
-            'end_round': end_round,
-            'step': step,
-            'model_params': model_params,
-            'timestamp': timestamp
+    # Determine which rounds to use for evaluation
+    available_rounds = list(range(start_round, end_round, step))
+    
+    # If evaluation_rounds is None or exceeds available rounds, use all rounds
+    # This is the key change - we default to using ALL rounds for evaluation
+    if evaluation_rounds is None or evaluation_rounds >= len(available_rounds):
+        evaluation_rounds = available_rounds
+    else:
+        # Only if specifically requested, select a subset of rounds
+        evaluation_round_indices = np.linspace(0, len(available_rounds)-1, evaluation_rounds, dtype=int)
+        evaluation_rounds = [available_rounds[i] for i in evaluation_round_indices]
+    
+    print(f"\nOptimizing parameters for target: {target}, index: {target_index}")
+    print(f"Using {len(evaluation_rounds)} rounds for evaluation")
+    
+    # Load data for all evaluation rounds in advance
+    round_data = {}
+    for round_num in evaluation_rounds:
+        try:
+            X_train, y_train, X_test, y_test = load_cv_round(
+                cv_round=round_num,
+                target_dir=target_dir,
+                x_files_dir=x_files_dir,
+                target_index=target_index
+            )
+            
+            # Handle whether y_train/y_test are Series or DataFrame
+            if isinstance(y_train, pd.DataFrame):
+                y_train_vals = y_train.iloc[:, 0].values
+            else:  # It's a Series
+                y_train_vals = y_train.values
+                
+            if isinstance(y_test, pd.DataFrame):
+                y_test_vals = y_test.iloc[:, 0].values
+            else:  # It's a Series
+                y_test_vals = y_test.values
+            
+            # Check for and handle NaN or infinity values in training data
+            is_valid_train = ~(np.isnan(y_train_vals) | np.isinf(y_train_vals) | (np.abs(y_train_vals) > 1e10))
+            if not np.all(is_valid_train):
+                # Filter out invalid values
+                valid_indices = np.where(is_valid_train)[0]
+                X_train_clean = X_train.iloc[valid_indices]
+                y_train_vals_clean = y_train_vals[valid_indices]
+            else:
+                X_train_clean = X_train
+                y_train_vals_clean = y_train_vals
+            
+            # Check for and handle NaN or infinity values in test data
+            is_valid_test = ~(np.isnan(y_test_vals) | np.isinf(y_test_vals) | (np.abs(y_test_vals) > 1e10))
+            if not np.all(is_valid_test):
+                # Filter out invalid values
+                valid_indices = np.where(is_valid_test)[0]
+                X_test_clean = X_test.iloc[valid_indices]
+                y_test_vals_clean = y_test_vals[valid_indices]
+            else:
+                X_test_clean = X_test
+                y_test_vals_clean = y_test_vals
+            
+            # Store the cleaned data
+            round_data[round_num] = {
+                'X_train': X_train_clean,
+                'y_train': y_train_vals_clean,
+                'X_test': X_test_clean,
+                'y_test': y_test_vals_clean
+            }
+            
+        except Exception as e:
+            print(f"Error loading data for round {round_num}: {e}")
+            # Skip this round
+            continue
+    
+    if not round_data:
+        raise ValueError(f"Could not load data for any evaluation rounds for target {target}")
+    
+    def objective(trial):
+        """Optuna objective function for hyperparameter optimization"""
+        # Define the hyperparameter search space
+        param = {
+            'objective': 'reg:absoluteerror',  # Fixed based on your findings
+            'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
+            'max_depth': trial.suggest_int('max_depth', 4, 12),
+            'n_estimators': trial.suggest_int('n_estimators', 300, 1000),
+            'subsample': trial.suggest_float('subsample', 0.6, 0.9),
+            'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+            'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
+            'gamma': trial.suggest_float('gamma', 0, 5),
+            'random_state': 42
         }
-        print(f"\nRunning cross-validation for target: {target}")
-        print(f"Rounds: {start_round} to {end_round-1} with step {step}")
-        print(f"Total rounds available: {total_rounds}")
-        print(f"Model parameters: {model_params}")
-
-        # Track metrics across all rounds
-        all_metrics = {
+        
+        # Evaluate the model across all evaluation rounds
+        metrics_results = {
+            'r2': [],
             'mae': [],
             'rmse': []
         }
-
-        # Track all predictions for overall R² calculation
-        all_predictions = []
-
-        # Process each round
-        round_results = {}
-        successful_rounds = 0
-        failed_rounds = 0
-        # Create a unique directory for each index
-        if output_dir is None:
-            index_output_dir = f"./results/{target}_run_{timestamp}_ind_{ind}"
-        else:
-            # If output_dir is provided, append the index
-            index_output_dir = f"{output_dir}_ind_{ind}"
         
-        # Create output directory
-        os.makedirs(index_output_dir, exist_ok=True)
-        with open(os.path.join(index_output_dir, 'config.json'), 'w') as f:
-            json.dump(config, f, indent=4)
-        for round_num in range(start_round, end_round, step):
-            print(f"\nProcessing round {round_num}...")
-
-            try:
-                # Load data for this round
-                X_train, y_train, X_test, y_test = load_cv_round(
-                    cv_round=round_num,
-                    target_dir=target_dir,
-                    x_files_dir=x_files_dir,
-                    target_index=ind
-                )
-
-                # Train and evaluate model
-                result = train_and_evaluate(
-                    X_train=X_train,
-                    y_train=y_train,
-                    X_test=X_test,
-                    y_test=y_test,
-                    params=model_params
-                )
-
-                # Check if we skipped this round due to not enough valid data
-                if result['model'] is None:
-                    print(f"  Skipping round {round_num} due to insufficient valid data.")
-                    failed_rounds += 1
-                    continue
-                
-                # Add round number to predictions
-                result['predictions']['round'] = round_num
-
-                # Store results
-                round_results[round_num] = result['metrics']
-
-                # Update tracking metrics
-                all_metrics['mae'].append(result['metrics']['mae'])
-                all_metrics['rmse'].append(result['metrics']['rmse'])
-
-                # Add to all predictions for overall R² calculation
-                all_predictions.append(result['predictions'])
-
-                # Print round results
-                print(f"  MAE: {result['metrics']['mae']:.4f}")
-                print(f"  RMSE: {result['metrics']['rmse']:.4f}")
-
-                if 'rows_removed' in result:
-                    print(f"  Rows removed: {result['rows_removed']['train']} train, {result['rows_removed']['test']} test")
-
-                # Save predictions
-                pred_df = result['predictions']
-                pred_df.to_csv(os.path.join(index_output_dir, f"round_{round_num}_predictions.csv"), index=False)
-
-                # Create and save plot
-                plt.figure(figsize=(12, 6))
-
-                # Plot actual vs predicted values
-                plt.subplot(1, 2, 1)
-                plt.plot(pred_df['timestamp'], pred_df['actual'], 'b-', label='Actual')
-                plt.plot(pred_df['timestamp'], pred_df['predicted'], 'r--', label='Predicted')
-                plt.title(f'Round {round_num} - Actual vs Predicted')
-                plt.ylabel('Price')
-                plt.legend()
-                plt.xticks(rotation=45)
-                plt.grid(True)
-
-                # Scatter plot to visualize correlation
-                plt.subplot(1, 2, 2)
-                plt.scatter(pred_df['actual'], pred_df['predicted'])
-                plt.xlabel('Actual')
-                plt.ylabel('Predicted')
-
-                # Calculate round-specific R² for the plot title only
-                if np.var(pred_df['actual']) > 0:
-                    r2 = r2_score(pred_df['actual'], pred_df['predicted'])
-                    plt.title(f'Round {round_num} Correlation (R² = {r2:.4f})')
-                else:
-                    plt.title(f'Round {round_num} Correlation (R² undefined)')
-
-                min_val = min(pred_df['actual'].min(), pred_df['predicted'].min())
-                max_val = max(pred_df['actual'].max(), pred_df['predicted'].max())
-                plt.plot([min_val, max_val], [min_val, max_val], 'g-', alpha=0.5)  # Perfect prediction line
-                plt.grid(True)
-
-                plt.tight_layout()
-                plt.savefig(os.path.join(index_output_dir, f"round_{round_num}_plot.png"))
-                plt.close()
-
-                successful_rounds += 1
-
-            except Exception as e:
-                print(f"Error processing round {round_num}: {str(e)}")
-                failed_rounds += 1
-                continue
-    
-        # Check if we have any successful rounds
-        if not all_metrics['mae']:
-            print(f"No successful rounds for target {target}. All {failed_rounds} rounds failed.")
-
-            # Save a minimal summary
-            summary = {
-                'processed_rounds': failed_rounds + successful_rounds,
-                'successful_rounds': successful_rounds,
-                'failed_rounds': failed_rounds,
-                'error': "All rounds failed"
-            }
-
-            with open(os.path.join(index_output_dir, 'summary.json'), 'w') as f:
-                json.dump(summary, f, indent=4)
-
-            return summary
-
-        # Combine all predictions for overall R² calculation
-        if all_predictions:
-            combined_predictions = pd.concat(all_predictions, ignore_index=True)
-
-            # Calculate overall R² on all predictions combined
-            overall_actual = combined_predictions['actual'].values
-            overall_predicted = combined_predictions['predicted'].values
-
+        for round_num, data in round_data.items():
+            # Train model
+            model = xgb.XGBRegressor(**param)
+            model.fit(data['X_train'], data['y_train'])
+            
+            # Make predictions
+            y_pred = model.predict(data['X_test'])
+            
+            # Calculate metrics
+            mae = mean_absolute_error(data['y_test'], y_pred)
+            rmse = np.sqrt(mean_squared_error(data['y_test'], y_pred))
+            
             # Handle potential division by zero in R² calculation
-            if np.var(overall_actual) > 0:
-                overall_r2 = r2_score(overall_actual, overall_predicted)
+            if np.var(data['y_test']) > 0:
+                r2 = r2_score(data['y_test'], y_pred)
             else:
-                overall_r2 = float('nan')
-                print("Warning: Zero variance in combined actual values, overall R² is undefined")
-
-            # Save combined predictions
-            combined_predictions.to_csv(os.path.join(index_output_dir, "all_predictions.csv"), index=False)
-
-            # Create overall correlation plot
-            plt.figure(figsize=(10, 8))
-            plt.scatter(overall_actual, overall_predicted, alpha=0.5)
-            plt.xlabel('Actual Values')
-            plt.ylabel('Predicted Values')
-
-            if not np.isnan(overall_r2):
-                plt.title(f'Overall Correlation (R² = {overall_r2:.4f})')
-            else:
-                plt.title('Overall Correlation (R² undefined)')
-
-            min_val = min(overall_actual.min(), overall_predicted.min())
-            max_val = max(overall_actual.max(), overall_predicted.max())
-            plt.plot([min_val, max_val], [min_val, max_val], 'g-', alpha=0.5)
-            plt.grid(True)
-
-            # Add summary statistics to plot
-            overall_mae = mean_absolute_error(overall_actual, overall_predicted)
-            overall_rmse = np.sqrt(mean_squared_error(overall_actual, overall_predicted))
-
-            stats_text = (
-                f"Overall Statistics:\n"
-                f"MAE: {overall_mae:.4f}\n"
-                f"RMSE: {overall_rmse:.4f}\n"
-                f"R²: {overall_r2:.4f}\n"
-                f"Samples: {len(overall_actual)}"
-            )
-
-            plt.figtext(0.15, 0.8, stats_text, fontsize=12, 
-                       bbox=dict(facecolor='white', alpha=0.8))
-
-            plt.tight_layout()
-            plt.savefig(os.path.join(index_output_dir, "overall_correlation.png"))
-            plt.close()
+                r2 = 0  # Default value if variance is zero
+            
+            metrics_results['r2'].append(r2)
+            metrics_results['mae'].append(mae)
+            metrics_results['rmse'].append(rmse)
+        
+        # Calculate average metrics
+        avg_r2 = np.mean(metrics_results['r2'])
+        avg_mae = np.mean(metrics_results['mae'])
+        avg_rmse = np.mean(metrics_results['rmse'])
+        
+        # Return the appropriate metric for optimization
+        if metric == 'r2':
+            return avg_r2  # Higher is better
+        elif metric == 'mae':
+            return -avg_mae  # Lower is better, so negate for maximization
+        elif metric == 'rmse':
+            return -avg_rmse  # Lower is better, so negate for maximization
         else:
-            overall_r2 = float('nan')
-            overall_mae = float('nan')
-            overall_rmse = float('nan')
-
-        # Calculate summary statistics
-        summary = {
-            'avg_mae': np.mean(all_metrics['mae']),
-            'avg_rmse': np.mean(all_metrics['rmse']),
-            'std_mae': np.std(all_metrics['mae']),
-            'std_rmse': np.std(all_metrics['rmse']),
-            'min_mae': np.min(all_metrics['mae']),
-            'overall_r2': overall_r2,
-            'overall_mae': overall_mae,
-            'overall_rmse': overall_rmse,
-            'processed_rounds': failed_rounds + successful_rounds,
-            'successful_rounds': successful_rounds,
-            'failed_rounds': failed_rounds
-        }
-
-        # Print summary
-        print("\nCross-validation summary:")
-        print(f"Processed {summary['processed_rounds']} rounds ({summary['successful_rounds']} successful, {summary['failed_rounds']} failed)")
-        print(f"Avg MAE: {summary['avg_mae']:.4f} ± {summary['std_mae']:.4f}")
-        print(f"Avg RMSE: {summary['avg_rmse']:.4f} ± {summary['std_rmse']:.4f}")
-        print(f"Overall R² (calculated on all predictions): {summary['overall_r2']:.4f}")
-        print(f"Overall MAE: {summary['overall_mae']:.4f}")
-        print(f"Overall RMSE: {summary['overall_rmse']:.4f}")
-
-        # Create MAE/RMSE summary plots
-        if round_results:
-            plt.figure(figsize=(12, 5))
-
-            # Plot MAE across rounds
-            plt.subplot(1, 2, 1)
-            rounds = list(round_results.keys())
-            mae_values = [round_results[r]['mae'] for r in rounds]
-            plt.bar(rounds, mae_values)
-            plt.axhline(y=overall_mae, color='r', linestyle='-', label=f'Overall MAE: {overall_mae:.4f}')
-            plt.xlabel('Round Number')
-            plt.ylabel('MAE')
-            plt.title('MAE Values Across Rounds')
-            plt.grid(True, axis='y')
-            plt.legend()
-
-            # Plot RMSE across rounds
-            plt.subplot(1, 2, 2)
-            rmse_values = [round_results[r]['rmse'] for r in rounds]
-            plt.bar(rounds, rmse_values)
-            plt.axhline(y=overall_rmse, color='r', linestyle='-', label=f'Overall RMSE: {overall_rmse:.4f}')
-            plt.xlabel('Round Number')
-            plt.ylabel('RMSE')
-            plt.title('RMSE Values Across Rounds')
-            plt.grid(True, axis='y')
-            plt.legend()
-
-            plt.tight_layout()
-            plt.savefig(os.path.join(index_output_dir, "metrics_summary.png"))
-            plt.close()
-
-        # Save summary to file
-        with open(os.path.join(index_output_dir, 'summary.json'), 'w') as f:
-            # Convert numpy values to regular Python types for JSON serialization
-            summary_json = {k: float(v) if isinstance(v, (np.floating, float)) and not np.isnan(v) else 
-                              None if isinstance(v, (np.floating, float)) and np.isnan(v) else v 
-                              for k, v in summary.items()}
-            json.dump(summary_json, f, indent=4)
-
-        # Save individual round results
-        with open(os.path.join(index_output_dir, 'round_results.json'), 'w') as f:
-            # Convert to regular Python types
-            round_results_json = {}
-            for round_num, metrics in round_results.items():
-                round_results_json[str(round_num)] = {
-                    k: float(v) if isinstance(v, np.floating) else v 
-                    for k, v in metrics.items()
-                }
-            json.dump(round_results_json, f, indent=4)
-
-    return {
-        'summary': summary,
-        'round_results': round_results
+            raise ValueError(f"Unknown metric: {metric}")
+    
+    # Create a study with the appropriate direction
+    if metric == 'r2':
+        study = optuna.create_study(direction='maximize')
+    else:  # 'mae' or 'rmse'
+        study = optuna.create_study(direction='maximize')  # We negate the values in the objective
+    
+    # Run the optimization
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+    
+    # Get the best parameters
+    best_params = study.best_params
+    
+    # Add the fixed parameters
+    best_params['objective'] = 'reg:absoluteerror'
+    best_params['random_state'] = 42
+    
+    # Print the best parameters
+    print("\nBest parameters found:")
+    for key, value in best_params.items():
+        print(f"  {key}: {value}")
+    
+    print(f"\nBest {metric} value: ", end="")
+    if metric == 'r2':
+        print(f"{study.best_value:.4f}")
+    elif metric == 'mae':
+        print(f"{-study.best_value:.4f}")
+    elif metric == 'rmse':
+        print(f"{-study.best_value:.4f}")
+    
+    # Set up output directory with timestamp
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    output_dir = f"./results/{target}_optim_{timestamp}_ind_{target_index}"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Save the optimization results
+    optimization_results = {
+        'best_params': best_params,
+        'best_value': study.best_value if metric == 'r2' else -study.best_value,
+        'metric': metric,
+        'target': target,
+        'target_index': target_index,
+        'evaluation_rounds': evaluation_rounds,
+        'n_trials': n_trials,
+        'timestamp': timestamp
     }
+    
+    with open(os.path.join(output_dir, 'optimization_results.json'), 'w') as f:
+        json.dump(optimization_results, f, indent=4)
+    
+    # Create parameter importance plot
+    try:
+        importance = optuna.visualization.plot_param_importances(study)
+        # Save the plot as an image
+        import plotly.io as pio
+        pio.write_image(importance, os.path.join(output_dir, 'param_importances.png'))
+    except Exception as e:
+        print(f"Could not create parameter importance plot: {e}")
+    
+    # Create optimization history plot
+    try:
+        history = optuna.visualization.plot_optimization_history(study)
+        # Save the plot as an image
+        pio.write_image(history, os.path.join(output_dir, 'optimization_history.png'))
+    except Exception as e:
+        print(f"Could not create optimization history plot: {e}")
+    
+    return optimization_results
+
 
 def main():
     parser = argparse.ArgumentParser(description='Run cross-validation with overall R² calculation')
     
     parser.add_argument('--targets', type=str, default=None,
-                       help='Target to process (default: show available targets)')
+                       help='Target to process, comma-separated (default: show available targets)')
     
     parser.add_argument('--start', type=int, default=0,
                        help='First CV round to process (default: 0)')
@@ -560,22 +807,37 @@ def main():
                        help='Base directory for organized files (default: ./src/data/csv)')
     
     parser.add_argument('--n_estimators', type=int, default=500,
-                       help='Number of estimators for XGBoost (default: 100)')
+                       help='Number of estimators for XGBoost (default: 500)')
     
     parser.add_argument('--learning_rate', type=float, default=0.05,
-                       help='Learning rate for XGBoost (default: 0.01)')
+                       help='Learning rate for XGBoost (default: 0.05)')
     
     parser.add_argument('--max_depth', type=int, default=6,
-                       help='Max depth for XGBoost (default: 3)')
+                       help='Max depth for XGBoost (default: 6)')
     
     parser.add_argument('--subsample', type=float, default=0.8,
-                       help='Subsample ratio for XGBoost (default: 0.9)')
+                       help='Subsample ratio for XGBoost (default: 0.8)')
     
     parser.add_argument('--list', action='store_true',
                        help='List available targets and exit')
     
     parser.add_argument('--objective', type=str, default='reg:squarederror',
                         help='Objective function for XGBoost (default: reg:squarederror)')
+    
+    parser.add_argument('--target-index', type=int, default=None,
+                        help='Index of target to process (0 or 1, default: run both)')
+    
+    parser.add_argument('--optimize', action='store_true',
+                        help='Run hyperparameter optimization instead of cross-validation')
+    
+    parser.add_argument('--n-trials', type=int, default=50,
+                        help='Number of trials for hyperparameter optimization (default: 50)')
+    
+    parser.add_argument('--evaluation-rounds', type=int, default=None, 
+                        help='Number of rounds to use for evaluation during optimization (default: all rounds)')
+    
+    parser.add_argument('--metric', type=str, default='r2', choices=['r2', 'mae', 'rmse'],
+                        help='Metric to optimize (default: r2)')
     
     args = parser.parse_args()
     
@@ -591,8 +853,7 @@ def main():
                 print(f"  {target} ({num_rounds} rounds)")
             except Exception as e:
                 print(f"  {target} (Error: {str(e)})")
-        
-
+        return
     
     # Configure model parameters
     model_params = {
@@ -605,43 +866,53 @@ def main():
         'random_state': 42
     }
     
-    # Run for a specific target if provided, otherwise run for all available targets
-    if args.targets:
-        for t in args.targets.split(','):
-            if t not in available_targets:
-                print(f"Target '{args.targets}' not found in available targets.")
-                print("Available targets:")
-                for target in available_targets:
-                    print(f"  {target}")
-                return
-
-            # Run CV for the specified target
-            run_cv_for_target(
-                target=t,
-                start_round=args.start,
-                end_round=args.end,
-                step=args.step,
-                model_params=model_params,
-                organized_dir=args.organized_dir
-            )
-    else:
-        # Run for all available targets
-        for target in available_targets:
-            try:
-                print(f"\n{'='*50}")
-                print(f"Processing target: {target}")
-                print(f"{'='*50}")
-                
-                run_cv_for_target(
-                    target=target,
-                    start_round=args.start,
-                    end_round=args.end,
-                    step=args.step,
-                    model_params=model_params,
-                    organized_dir=args.organized_dir
-                )
-            except Exception as e:
-                print(f"Error processing target {target}: {str(e)}")
+    # Determine targets to process
+    target_list = available_targets if args.targets is None else args.targets.split(',')
+    
+    # Process each target
+    for target in target_list:
+        if target not in available_targets:
+            print(f"Target '{target}' not found in available targets.")
+            continue
+        
+        try:
+            print(f"\n{'='*50}")
+            print(f"Processing target: {target}")
+            print(f"{'='*50}")
+            
+            # Determine target indices to process
+            if args.target_index is not None:
+                target_indices = [args.target_index]
+            else:
+                target_indices = [0, 1]  # Process both up and down regulation
+            
+            for target_index in target_indices:
+                if args.optimize:
+                    # Run hyperparameter optimization
+                    optimize_parameters_for_target(
+                        target=target,
+                        start_round=args.start,
+                        end_round=args.end,
+                        step=args.step,
+                        organized_dir=args.organized_dir,
+                        target_index=target_index,
+                        n_trials=args.n_trials,
+                        evaluation_rounds=args.evaluation_rounds,
+                        metric=args.metric
+                    )
+                else:
+                    # Run cross-validation
+                    run_cv_for_target(
+                        target=target,
+                        start_round=args.start,
+                        end_round=args.end,
+                        step=args.step,
+                        model_params=model_params,
+                        organized_dir=args.organized_dir,
+                        target_index=target_index
+                    )
+        except Exception as e:
+            print(f"Error processing target {target}: {str(e)}")
 
 if __name__ == "__main__":
     main()
