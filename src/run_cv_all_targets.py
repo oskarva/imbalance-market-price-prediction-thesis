@@ -252,42 +252,45 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
         end_round = total_rounds
     else:
         end_round = min(end_round, total_rounds)
-        
-    # Save configuration
-    config = {
-        'target': target,
-        'start_round': start_round,
-        'end_round': end_round,
-        'step': step,
-        'model_params': model_params,
-        'timestamp': timestamp
-    }
     
-    print(f"\nRunning cross-validation for target: {target}")
-    print(f"Rounds: {start_round} to {end_round-1} with step {step}")
-    print(f"Total rounds available: {total_rounds}")
-    print(f"Model parameters: {model_params}")
-    
-    # Track metrics across all rounds
-    all_metrics = {
-        'mae': [],
-        'rmse': []
-    }
-    
-    # Track all predictions for overall R² calculation
-    all_predictions = []
-    
-    # Process each round
-    round_results = {}
-    successful_rounds = 0
-    failed_rounds = 0
     for ind in [0,1]:
+        # Save configuration
+        config = {
+            'target': target,
+            'start_round': start_round,
+            'end_round': end_round,
+            'step': step,
+            'model_params': model_params,
+            'timestamp': timestamp
+        }
+        print(f"\nRunning cross-validation for target: {target}")
+        print(f"Rounds: {start_round} to {end_round-1} with step {step}")
+        print(f"Total rounds available: {total_rounds}")
+        print(f"Model parameters: {model_params}")
+
+        # Track metrics across all rounds
+        all_metrics = {
+            'mae': [],
+            'rmse': []
+        }
+
+        # Track all predictions for overall R² calculation
+        all_predictions = []
+
+        # Process each round
+        round_results = {}
+        successful_rounds = 0
+        failed_rounds = 0
+        # Create a unique directory for each index
         if output_dir is None:
-            output_dir = f"./results/{target}_run_{timestamp}_ind_{ind}"
-    
+            index_output_dir = f"./results/{target}_run_{timestamp}_ind_{ind}"
+        else:
+            # If output_dir is provided, append the index
+            index_output_dir = f"{output_dir}_ind_{ind}"
+        
         # Create output directory
-        os.makedirs(output_dir, exist_ok=True)
-        with open(os.path.join(output_dir, 'config.json'), 'w') as f:
+        os.makedirs(index_output_dir, exist_ok=True)
+        with open(os.path.join(index_output_dir, 'config.json'), 'w') as f:
             json.dump(config, f, indent=4)
         for round_num in range(start_round, end_round, step):
             print(f"\nProcessing round {round_num}...")
@@ -338,7 +341,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
 
                 # Save predictions
                 pred_df = result['predictions']
-                pred_df.to_csv(os.path.join(output_dir, f"round_{round_num}_predictions.csv"), index=False)
+                pred_df.to_csv(os.path.join(index_output_dir, f"round_{round_num}_predictions.csv"), index=False)
 
                 # Create and save plot
                 plt.figure(figsize=(12, 6))
@@ -372,7 +375,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
                 plt.grid(True)
 
                 plt.tight_layout()
-                plt.savefig(os.path.join(output_dir, f"round_{round_num}_plot.png"))
+                plt.savefig(os.path.join(index_output_dir, f"round_{round_num}_plot.png"))
                 plt.close()
 
                 successful_rounds += 1
@@ -382,154 +385,154 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
                 failed_rounds += 1
                 continue
     
-    # Check if we have any successful rounds
-    if not all_metrics['mae']:
-        print(f"No successful rounds for target {target}. All {failed_rounds} rounds failed.")
-        
-        # Save a minimal summary
-        summary = {
-            'processed_rounds': failed_rounds + successful_rounds,
-            'successful_rounds': successful_rounds,
-            'failed_rounds': failed_rounds,
-            'error': "All rounds failed"
-        }
-        
-        with open(os.path.join(output_dir, 'summary.json'), 'w') as f:
-            json.dump(summary, f, indent=4)
-            
-        return summary
-    
-    # Combine all predictions for overall R² calculation
-    if all_predictions:
-        combined_predictions = pd.concat(all_predictions, ignore_index=True)
-        
-        # Calculate overall R² on all predictions combined
-        overall_actual = combined_predictions['actual'].values
-        overall_predicted = combined_predictions['predicted'].values
-        
-        # Handle potential division by zero in R² calculation
-        if np.var(overall_actual) > 0:
-            overall_r2 = r2_score(overall_actual, overall_predicted)
+        # Check if we have any successful rounds
+        if not all_metrics['mae']:
+            print(f"No successful rounds for target {target}. All {failed_rounds} rounds failed.")
+
+            # Save a minimal summary
+            summary = {
+                'processed_rounds': failed_rounds + successful_rounds,
+                'successful_rounds': successful_rounds,
+                'failed_rounds': failed_rounds,
+                'error': "All rounds failed"
+            }
+
+            with open(os.path.join(index_output_dir, 'summary.json'), 'w') as f:
+                json.dump(summary, f, indent=4)
+
+            return summary
+
+        # Combine all predictions for overall R² calculation
+        if all_predictions:
+            combined_predictions = pd.concat(all_predictions, ignore_index=True)
+
+            # Calculate overall R² on all predictions combined
+            overall_actual = combined_predictions['actual'].values
+            overall_predicted = combined_predictions['predicted'].values
+
+            # Handle potential division by zero in R² calculation
+            if np.var(overall_actual) > 0:
+                overall_r2 = r2_score(overall_actual, overall_predicted)
+            else:
+                overall_r2 = float('nan')
+                print("Warning: Zero variance in combined actual values, overall R² is undefined")
+
+            # Save combined predictions
+            combined_predictions.to_csv(os.path.join(index_output_dir, "all_predictions.csv"), index=False)
+
+            # Create overall correlation plot
+            plt.figure(figsize=(10, 8))
+            plt.scatter(overall_actual, overall_predicted, alpha=0.5)
+            plt.xlabel('Actual Values')
+            plt.ylabel('Predicted Values')
+
+            if not np.isnan(overall_r2):
+                plt.title(f'Overall Correlation (R² = {overall_r2:.4f})')
+            else:
+                plt.title('Overall Correlation (R² undefined)')
+
+            min_val = min(overall_actual.min(), overall_predicted.min())
+            max_val = max(overall_actual.max(), overall_predicted.max())
+            plt.plot([min_val, max_val], [min_val, max_val], 'g-', alpha=0.5)
+            plt.grid(True)
+
+            # Add summary statistics to plot
+            overall_mae = mean_absolute_error(overall_actual, overall_predicted)
+            overall_rmse = np.sqrt(mean_squared_error(overall_actual, overall_predicted))
+
+            stats_text = (
+                f"Overall Statistics:\n"
+                f"MAE: {overall_mae:.4f}\n"
+                f"RMSE: {overall_rmse:.4f}\n"
+                f"R²: {overall_r2:.4f}\n"
+                f"Samples: {len(overall_actual)}"
+            )
+
+            plt.figtext(0.15, 0.8, stats_text, fontsize=12, 
+                       bbox=dict(facecolor='white', alpha=0.8))
+
+            plt.tight_layout()
+            plt.savefig(os.path.join(index_output_dir, "overall_correlation.png"))
+            plt.close()
         else:
             overall_r2 = float('nan')
-            print("Warning: Zero variance in combined actual values, overall R² is undefined")
-        
-        # Save combined predictions
-        combined_predictions.to_csv(os.path.join(output_dir, "all_predictions.csv"), index=False)
-        
-        # Create overall correlation plot
-        plt.figure(figsize=(10, 8))
-        plt.scatter(overall_actual, overall_predicted, alpha=0.5)
-        plt.xlabel('Actual Values')
-        plt.ylabel('Predicted Values')
-        
-        if not np.isnan(overall_r2):
-            plt.title(f'Overall Correlation (R² = {overall_r2:.4f})')
-        else:
-            plt.title('Overall Correlation (R² undefined)')
-            
-        min_val = min(overall_actual.min(), overall_predicted.min())
-        max_val = max(overall_actual.max(), overall_predicted.max())
-        plt.plot([min_val, max_val], [min_val, max_val], 'g-', alpha=0.5)
-        plt.grid(True)
-        
-        # Add summary statistics to plot
-        overall_mae = mean_absolute_error(overall_actual, overall_predicted)
-        overall_rmse = np.sqrt(mean_squared_error(overall_actual, overall_predicted))
-        
-        stats_text = (
-            f"Overall Statistics:\n"
-            f"MAE: {overall_mae:.4f}\n"
-            f"RMSE: {overall_rmse:.4f}\n"
-            f"R²: {overall_r2:.4f}\n"
-            f"Samples: {len(overall_actual)}"
-        )
-        
-        plt.figtext(0.15, 0.8, stats_text, fontsize=12, 
-                   bbox=dict(facecolor='white', alpha=0.8))
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, "overall_correlation.png"))
-        plt.close()
-    else:
-        overall_r2 = float('nan')
-        overall_mae = float('nan')
-        overall_rmse = float('nan')
-    
-    # Calculate summary statistics
-    summary = {
-        'avg_mae': np.mean(all_metrics['mae']),
-        'avg_rmse': np.mean(all_metrics['rmse']),
-        'std_mae': np.std(all_metrics['mae']),
-        'std_rmse': np.std(all_metrics['rmse']),
-        'min_mae': np.min(all_metrics['mae']),
-        'overall_r2': overall_r2,
-        'overall_mae': overall_mae,
-        'overall_rmse': overall_rmse,
-        'processed_rounds': failed_rounds + successful_rounds,
-        'successful_rounds': successful_rounds,
-        'failed_rounds': failed_rounds
-    }
-    
-    # Print summary
-    print("\nCross-validation summary:")
-    print(f"Processed {summary['processed_rounds']} rounds ({summary['successful_rounds']} successful, {summary['failed_rounds']} failed)")
-    print(f"Avg MAE: {summary['avg_mae']:.4f} ± {summary['std_mae']:.4f}")
-    print(f"Avg RMSE: {summary['avg_rmse']:.4f} ± {summary['std_rmse']:.4f}")
-    print(f"Overall R² (calculated on all predictions): {summary['overall_r2']:.4f}")
-    print(f"Overall MAE: {summary['overall_mae']:.4f}")
-    print(f"Overall RMSE: {summary['overall_rmse']:.4f}")
-    
-    # Create MAE/RMSE summary plots
-    if round_results:
-        plt.figure(figsize=(12, 5))
-        
-        # Plot MAE across rounds
-        plt.subplot(1, 2, 1)
-        rounds = list(round_results.keys())
-        mae_values = [round_results[r]['mae'] for r in rounds]
-        plt.bar(rounds, mae_values)
-        plt.axhline(y=overall_mae, color='r', linestyle='-', label=f'Overall MAE: {overall_mae:.4f}')
-        plt.xlabel('Round Number')
-        plt.ylabel('MAE')
-        plt.title('MAE Values Across Rounds')
-        plt.grid(True, axis='y')
-        plt.legend()
-        
-        # Plot RMSE across rounds
-        plt.subplot(1, 2, 2)
-        rmse_values = [round_results[r]['rmse'] for r in rounds]
-        plt.bar(rounds, rmse_values)
-        plt.axhline(y=overall_rmse, color='r', linestyle='-', label=f'Overall RMSE: {overall_rmse:.4f}')
-        plt.xlabel('Round Number')
-        plt.ylabel('RMSE')
-        plt.title('RMSE Values Across Rounds')
-        plt.grid(True, axis='y')
-        plt.legend()
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, "metrics_summary.png"))
-        plt.close()
-    
-    # Save summary to file
-    with open(os.path.join(output_dir, 'summary.json'), 'w') as f:
-        # Convert numpy values to regular Python types for JSON serialization
-        summary_json = {k: float(v) if isinstance(v, (np.floating, float)) and not np.isnan(v) else 
-                          None if isinstance(v, (np.floating, float)) and np.isnan(v) else v 
-                          for k, v in summary.items()}
-        json.dump(summary_json, f, indent=4)
-    
-    # Save individual round results
-    with open(os.path.join(output_dir, 'round_results.json'), 'w') as f:
-        # Convert to regular Python types
-        round_results_json = {}
-        for round_num, metrics in round_results.items():
-            round_results_json[str(round_num)] = {
-                k: float(v) if isinstance(v, np.floating) else v 
-                for k, v in metrics.items()
-            }
-        json.dump(round_results_json, f, indent=4)
-    
+            overall_mae = float('nan')
+            overall_rmse = float('nan')
+
+        # Calculate summary statistics
+        summary = {
+            'avg_mae': np.mean(all_metrics['mae']),
+            'avg_rmse': np.mean(all_metrics['rmse']),
+            'std_mae': np.std(all_metrics['mae']),
+            'std_rmse': np.std(all_metrics['rmse']),
+            'min_mae': np.min(all_metrics['mae']),
+            'overall_r2': overall_r2,
+            'overall_mae': overall_mae,
+            'overall_rmse': overall_rmse,
+            'processed_rounds': failed_rounds + successful_rounds,
+            'successful_rounds': successful_rounds,
+            'failed_rounds': failed_rounds
+        }
+
+        # Print summary
+        print("\nCross-validation summary:")
+        print(f"Processed {summary['processed_rounds']} rounds ({summary['successful_rounds']} successful, {summary['failed_rounds']} failed)")
+        print(f"Avg MAE: {summary['avg_mae']:.4f} ± {summary['std_mae']:.4f}")
+        print(f"Avg RMSE: {summary['avg_rmse']:.4f} ± {summary['std_rmse']:.4f}")
+        print(f"Overall R² (calculated on all predictions): {summary['overall_r2']:.4f}")
+        print(f"Overall MAE: {summary['overall_mae']:.4f}")
+        print(f"Overall RMSE: {summary['overall_rmse']:.4f}")
+
+        # Create MAE/RMSE summary plots
+        if round_results:
+            plt.figure(figsize=(12, 5))
+
+            # Plot MAE across rounds
+            plt.subplot(1, 2, 1)
+            rounds = list(round_results.keys())
+            mae_values = [round_results[r]['mae'] for r in rounds]
+            plt.bar(rounds, mae_values)
+            plt.axhline(y=overall_mae, color='r', linestyle='-', label=f'Overall MAE: {overall_mae:.4f}')
+            plt.xlabel('Round Number')
+            plt.ylabel('MAE')
+            plt.title('MAE Values Across Rounds')
+            plt.grid(True, axis='y')
+            plt.legend()
+
+            # Plot RMSE across rounds
+            plt.subplot(1, 2, 2)
+            rmse_values = [round_results[r]['rmse'] for r in rounds]
+            plt.bar(rounds, rmse_values)
+            plt.axhline(y=overall_rmse, color='r', linestyle='-', label=f'Overall RMSE: {overall_rmse:.4f}')
+            plt.xlabel('Round Number')
+            plt.ylabel('RMSE')
+            plt.title('RMSE Values Across Rounds')
+            plt.grid(True, axis='y')
+            plt.legend()
+
+            plt.tight_layout()
+            plt.savefig(os.path.join(index_output_dir, "metrics_summary.png"))
+            plt.close()
+
+        # Save summary to file
+        with open(os.path.join(index_output_dir, 'summary.json'), 'w') as f:
+            # Convert numpy values to regular Python types for JSON serialization
+            summary_json = {k: float(v) if isinstance(v, (np.floating, float)) and not np.isnan(v) else 
+                              None if isinstance(v, (np.floating, float)) and np.isnan(v) else v 
+                              for k, v in summary.items()}
+            json.dump(summary_json, f, indent=4)
+
+        # Save individual round results
+        with open(os.path.join(index_output_dir, 'round_results.json'), 'w') as f:
+            # Convert to regular Python types
+            round_results_json = {}
+            for round_num, metrics in round_results.items():
+                round_results_json[str(round_num)] = {
+                    k: float(v) if isinstance(v, np.floating) else v 
+                    for k, v in metrics.items()
+                }
+            json.dump(round_results_json, f, indent=4)
+
     return {
         'summary': summary,
         'round_results': round_results
@@ -616,7 +619,6 @@ def main():
             end_round=args.end,
             step=args.step,
             model_params=model_params,
-            output_dir=os.path.join(args.output, f"{args.target}_run_{time.strftime('%Y%m%d-%H%M%S')}"),
             organized_dir=args.organized_dir
         )
     else:
@@ -633,7 +635,6 @@ def main():
                     end_round=args.end,
                     step=args.step,
                     model_params=model_params,
-                    output_dir=os.path.join(args.output, f"{target}_run_{time.strftime('%Y%m%d-%H%M%S')}"),
                     organized_dir=args.organized_dir
                 )
             except Exception as e:
