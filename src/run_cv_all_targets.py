@@ -839,6 +839,15 @@ def main():
     parser.add_argument('--metric', type=str, default='r2', choices=['r2', 'mae', 'rmse'],
                         help='Metric to optimize (default: r2)')
     
+    parser.add_argument('--colsample_bytree', type=float, default=0.9,
+                        help='Colsample by tree for XGBoost (default: 0.9)')
+    
+    parser.add_argument('--min_child_weight', type=int, default=1,
+                        help='Min child weight for XGBoost (default: 1)')
+    
+    parser.add_argument('--gamma', type=float, default=0,
+                        help='Gamma for XGBoost (default: 0)')
+    
     args = parser.parse_args()
     
     # Get available targets
@@ -862,7 +871,9 @@ def main():
         'learning_rate': args.learning_rate,
         'max_depth': args.max_depth,
         'subsample': args.subsample,
-        'colsample_bytree': 0.9,  # Default value
+        'colsample_bytree': args.colsample_bytree,
+        'min_child_weight': args.min_child_weight,
+        'gamma': args.gamma,
         'random_state': 42
     }
     
