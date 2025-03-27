@@ -18,6 +18,7 @@ Pipfile.lock
 
 # Pycache
 __pycache__/
+.DS_Store
 
 # Raw data
 src/data/csv/
