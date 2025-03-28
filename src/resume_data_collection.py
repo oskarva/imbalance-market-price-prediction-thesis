@@ -24,7 +24,7 @@ def main():
     parser.add_argument('--start-date', type=str, default="2021-01-01",
                         help='Start date for data collection (default: 2021-01-01)')
     
-    parser.add_argument('--end-date', type=str, default=None,
+    parser.add_argument('--end-date', type=str, default="2025-03-18",
                         help='End date for data collection (default: today)')
     
     args = parser.parse_args()
