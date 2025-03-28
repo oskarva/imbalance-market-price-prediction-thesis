@@ -616,8 +616,8 @@ def main():
     parser.add_argument('--step', type=int, default=1,
                        help='Step size for processing rounds (default: 1)')
     
-    parser.add_argument('--output', type=str, default='./results',
-                       help='Base directory to save results (default: ./results)')
+    parser.add_argument('--output', type=str, default='./results/xgbboost_time_features',
+                       help='Base directory to save results (default: ./results/xgbboost_time_features)')
     
     parser.add_argument('--organized-dir', type=str, default='./src/data/organized',
                        help='Base directory for organized files (default: ./src/data/organized)')

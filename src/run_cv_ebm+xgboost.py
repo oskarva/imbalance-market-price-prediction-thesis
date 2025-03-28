@@ -8,6 +8,7 @@ This script applies a stacked model to datasets across different areas:
 3. Final predictions are the sum of both models' outputs
 
 The script follows the same structure as run_cv_all_targets.py but with this custom stacked model.
+Performance optimized version to reduce training time.
 """
 
 import os
@@ -21,6 +22,13 @@ import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
 from interpret.glassbox import ExplainableBoostingRegressor
+from sklearn.linear_model import LinearRegression
+import multiprocessing
+from functools import partial
+import warnings
+
+# Suppress warnings to reduce output clutter
+warnings.filterwarnings('ignore')
 
 def get_available_targets(organized_dir="./src/data/csv", areas=["no1", "no2", "no3", "no4", "no5"]):
     """
@@ -112,39 +120,58 @@ def get_cv_round_count(target_dir):
     
     return max(round_numbers) + 1  # +1 because we count from 0
 
-def train_and_evaluate_stacked_model(X_train, y_train, X_test, y_test, ebm_params=None, xgb_params=None):
+def train_and_evaluate_stacked_model(X_train, y_train, X_test, y_test, ebm_params=None, xgb_params=None, fast_mode=True):
     """
     Train and evaluate a stacked model (EBM + XGBoost on residuals) with proper data cleaning.
+    Fast mode option uses simplified EBM parameters for speed.
     
     Args:
         X_train, y_train: Training data
         X_test, y_test: Test data
         ebm_params: Parameters for the EBM model
         xgb_params: Parameters for the XGBoost model
+        fast_mode: If True, use simplified EBM for much faster training
         
     Returns:
         Dictionary with evaluation metrics, models and predictions
     """
     # Default parameters if none provided
     if ebm_params is None:
-        ebm_params = {
-            'max_bins': 256,
-            'max_interaction_bins': 32,
-            'interactions': 10,
-            'learning_rate': 0.01,
-            'min_samples_leaf': 5,
-            'random_state': 42
-        }
+        if fast_mode:
+            # Fast mode parameters - minimal interactions, fewer bins
+            ebm_params = {
+                'max_bins': 64,             # Reduced from 256
+                'max_interaction_bins': 16, # Reduced from 32
+                'interactions': 0,          # No interactions by default for speed
+                'learning_rate': 0.05,      # Increased from 0.01
+                'min_samples_leaf': 10,     # Increased from 5
+                'random_state': 42,
+                'outer_bags': 4,            # Reduced ensemble size
+                'inner_bags': 0,            # No inner bags for speed
+                'max_rounds': 1000,         # Limit iterations
+                'early_stopping_rounds': 50 # Add early stopping
+            }
+        else:
+            # Standard mode parameters
+            ebm_params = {
+                'max_bins': 256,
+                'max_interaction_bins': 32,
+                'interactions': 10,
+                'learning_rate': 0.01,
+                'min_samples_leaf': 5,
+                'random_state': 42
+            }
     
     if xgb_params is None:
         xgb_params = {
             'objective': 'reg:squarederror',
-            'n_estimators': 500,
-            'learning_rate': 0.05,
+            'n_estimators': 100,            # Reduced from 500
+            'learning_rate': 0.1,           # Increased from 0.05
             'max_depth': 6,
             'subsample': 0.8,
             'colsample_bytree': 0.9,
-            'random_state': 42
+            'random_state': 42,
+            'early_stopping_rounds': 10     # Add early stopping
         }
     
     # Handle whether y_train/y_test are Series or DataFrame
@@ -206,6 +233,9 @@ def train_and_evaluate_stacked_model(X_train, y_train, X_test, y_test, ebm_param
         }
     
     try:
+        # Start timing the model training
+        start_time = time.time()
+        
         # Step 1: Train EBM model
         print("  Training EBM model...")
         ebm_model = ExplainableBoostingRegressor(**ebm_params)
@@ -221,7 +251,9 @@ def train_and_evaluate_stacked_model(X_train, y_train, X_test, y_test, ebm_param
         # Step 3: Train XGBoost on the residuals
         print("  Training XGBoost model on residuals...")
         xgb_model = xgb.XGBRegressor(**xgb_params)
-        xgb_model.fit(X_train_clean, train_residuals)
+        xgb_model.fit(X_train_clean, train_residuals, 
+                      eval_set=[(X_train_clean, train_residuals)],
+                      verbose=0)
         
         # Get XGBoost predictions on test data (predicting residuals)
         xgb_test_preds = xgb_model.predict(X_test_clean)
@@ -232,6 +264,10 @@ def train_and_evaluate_stacked_model(X_train, y_train, X_test, y_test, ebm_param
         # Calculate metrics
         mae = mean_absolute_error(y_test_vals_clean, final_predictions)
         rmse = np.sqrt(mean_squared_error(y_test_vals_clean, final_predictions))
+        
+        # Record training time
+        training_time = time.time() - start_time
+        print(f"  Model training completed in {training_time:.2f} seconds")
         
         # Create DataFrame with predictions
         pred_df = pd.DataFrame({
@@ -248,7 +284,8 @@ def train_and_evaluate_stacked_model(X_train, y_train, X_test, y_test, ebm_param
             'xgb_model': xgb_model,
             'metrics': {
                 'mae': mae,
-                'rmse': rmse
+                'rmse': rmse,
+                'training_time': training_time
             },
             'predictions': pred_df,
             'rows_removed': {
@@ -273,11 +310,107 @@ def train_and_evaluate_stacked_model(X_train, y_train, X_test, y_test, ebm_param
             'error': str(e)
         }
 
+def process_single_round(round_num, target, target_dir, x_files_dir, target_index, 
+                        ebm_params, xgb_params, output_dir, fast_mode):
+    """
+    Process a single CV round - helper function for parallelization.
+    
+    Returns:
+        Dictionary with round results or None if error
+    """
+    try:
+        print(f"\nProcessing round {round_num}...")
+        
+        # Load data for this round
+        X_train, y_train, X_test, y_test = load_cv_round(
+            cv_round=round_num,
+            target_dir=target_dir,
+            x_files_dir=x_files_dir,
+            target_index=target_index
+        )
+
+        # Train and evaluate stacked model
+        result = train_and_evaluate_stacked_model(
+            X_train=X_train,
+            y_train=y_train,
+            X_test=X_test,
+            y_test=y_test,
+            ebm_params=ebm_params,
+            xgb_params=xgb_params,
+            fast_mode=fast_mode
+        )
+
+        # Check if we skipped this round due to not enough valid data or errors
+        if result['ebm_model'] is None or result['xgb_model'] is None:
+            print(f"  Skipping round {round_num} due to model training errors or insufficient valid data.")
+            return None
+        
+        # Add round number to predictions
+        result['predictions']['round'] = round_num
+
+        # Print round results
+        print(f"  MAE: {result['metrics']['mae']:.4f}")
+        print(f"  RMSE: {result['metrics']['rmse']:.4f}")
+        if 'training_time' in result['metrics']:
+            print(f"  Training time: {result['metrics']['training_time']:.2f} seconds")
+
+        if 'rows_removed' in result:
+            print(f"  Rows removed: {result['rows_removed']['train']} train, {result['rows_removed']['test']} test")
+
+        # Get the timestamp from the function parameters or generate one
+        # Using partial function, we don't have access to timestamp directly,
+        # so we'll extract it from the index_output_dir which will be created in the main function
+        round_output_dir = os.path.join(output_dir, f"{target}_ind_{target_index}_{time.strftime('%Y%m%d-%H%M%S')}")
+        os.makedirs(round_output_dir, exist_ok=True)
+        
+        pred_df = result['predictions']
+        pred_df.to_csv(os.path.join(round_output_dir, f"round_{round_num}_predictions.csv"), index=False)
+
+        # Create basic plot (we'll generate detailed plots later)
+        plt.figure(figsize=(12, 6))
+        plt.plot(pred_df['timestamp'], pred_df['actual'], 'b-', label='Actual')
+        plt.plot(pred_df['timestamp'], pred_df['predicted'], 'r--', label='Predicted')
+        plt.title(f'Round {round_num} - Actual vs Predicted')
+        plt.legend()
+        plt.xticks(rotation=45)
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(os.path.join(round_output_dir, f"round_{round_num}_plot.png"))
+        plt.close()
+
+        return {
+            'round_num': round_num,
+            'metrics': result['metrics'],
+            'predictions': result['predictions']
+        }
+    except Exception as e:
+        print(f"Error processing round {round_num}: {str(e)}")
+        return None
+
+def sample_rounds(start_round, end_round, step, max_rounds=10):
+    """
+    Sample a limited number of rounds evenly from the available range
+    to reduce computational load.
+    """
+    all_rounds = list(range(start_round, end_round, step))
+    
+    if len(all_rounds) <= max_rounds:
+        return all_rounds
+    
+    # Sample rounds evenly across the range
+    indices = np.linspace(0, len(all_rounds) - 1, max_rounds, dtype=int)
+    sampled_rounds = [all_rounds[i] for i in indices]
+    
+    return sampled_rounds
+
 def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
                             ebm_params=None, xgb_params=None, output_dir=None,
-                            organized_dir="./src/data/csv", target_index=0):
+                            organized_dir="./src/data/csv", target_index=0,
+                            parallel=True, max_workers=None, fast_mode=True,
+                            sample_size=None):
     """
     Run cross-validation for a specific target with stacked model (EBM+XGBoost) and overall R² calculation.
+    Performance optimized with optional parallelization and sampling.
     
     Args:
         target: Target directory name
@@ -289,6 +422,10 @@ def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
         output_dir: Directory to save results
         organized_dir: Base directory for organized files
         target_index: Index of target variable (0 or 1) for regulation up/down
+        parallel: Whether to use parallel processing
+        max_workers: Maximum number of parallel workers (None = auto)
+        fast_mode: Use simplified EBM parameters for faster training
+        sample_size: Maximum number of rounds to process (None = process all specified rounds)
         
     Returns:
         Dictionary with results summary
@@ -315,12 +452,23 @@ def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
     
     # Create a unique directory for the run
     if output_dir is None:
-        index_output_dir = f"./results/stacked/{target}_run_{timestamp}_ind_{target_index}"
+        base_output_dir = f"./results/stacked"
     else:
-        # If output_dir is provided, append the index
-        index_output_dir = f"{output_dir}/{target}_ind_{target_index}"
+        base_output_dir = output_dir
     
     # Create output directory
+    os.makedirs(base_output_dir, exist_ok=True)
+    
+    # Determine the rounds to process
+    if sample_size is not None:
+        rounds_to_process = sample_rounds(start_round, end_round, step, sample_size)
+        print(f"Sampling {len(rounds_to_process)} rounds from {(end_round-start_round)//step} available")
+    else:
+        rounds_to_process = list(range(start_round, end_round, step))
+        print(f"Processing all {len(rounds_to_process)} available rounds")
+    
+    # Create index-specific output directory with timestamp
+    index_output_dir = os.path.join(base_output_dir, f"{target}_ind_{target_index}_{timestamp}")
     os.makedirs(index_output_dir, exist_ok=True)
     
     # Save configuration
@@ -332,155 +480,97 @@ def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
         'ebm_params': ebm_params,
         'xgb_params': xgb_params,
         'timestamp': timestamp,
-        'target_index': target_index
+        'target_index': target_index,
+        'fast_mode': fast_mode,
+        'sampled_rounds': rounds_to_process
     }
     
     with open(os.path.join(index_output_dir, 'config.json'), 'w') as f:
         json.dump(config, f, indent=4)
     
     print(f"\nRunning stacked model (EBM+XGBoost) cross-validation for target: {target}, index: {target_index}")
-    print(f"Rounds: {start_round} to {end_round-1} with step {step}")
-    print(f"Total rounds available: {total_rounds}")
+    print(f"Processing {len(rounds_to_process)} rounds out of {total_rounds} total rounds")
+    print(f"Fast mode: {fast_mode}, Parallel: {parallel}")
     if ebm_params:
-        print(f"EBM parameters: {ebm_params}")
-    if xgb_params:
-        print(f"XGBoost parameters: {xgb_params}")
-
-    # Track metrics across all rounds
-    all_metrics = {
-        'mae': [],
-        'rmse': []
-    }
-
-    # Track all predictions for overall R² calculation
-    all_predictions = []
-
-    # Process each round
-    round_results = {}
-    successful_rounds = 0
-    failed_rounds = 0
-
-    for round_num in range(start_round, end_round, step):
-        print(f"\nProcessing round {round_num}...")
-
-        try:
-            # Load data for this round
-            X_train, y_train, X_test, y_test = load_cv_round(
-                cv_round=round_num,
-                target_dir=target_dir,
-                x_files_dir=x_files_dir,
-                target_index=target_index
+        print(f"EBM interactions: {ebm_params.get('interactions', 'Not specified')}")
+    
+    start_time_all = time.time()
+    
+    # Process rounds
+    if parallel and len(rounds_to_process) > 1:
+        # Use multiprocessing for parallelism
+        if max_workers is None:
+            max_workers = min(multiprocessing.cpu_count(), len(rounds_to_process))
+        
+        print(f"Running with {max_workers} parallel workers")
+        
+        # Create a partial function with fixed arguments
+        process_func = partial(
+            process_single_round,
+            target=target,
+            target_dir=target_dir,
+            x_files_dir=x_files_dir,
+            target_index=target_index,
+            ebm_params=ebm_params,
+            xgb_params=xgb_params,
+            output_dir=base_output_dir,
+            fast_mode=fast_mode
+        )
+        
+        # Run in parallel
+        with multiprocessing.Pool(max_workers) as pool:
+            results = pool.map(process_func, rounds_to_process)
+        
+        # Filter out None results (failed rounds)
+        results = [r for r in results if r is not None]
+        
+        # Process successful results
+        round_results = {}
+        all_predictions = []
+        
+        for r in results:
+            round_num = r['round_num']
+            round_results[round_num] = r['metrics']
+            all_predictions.append(r['predictions'])
+        
+        successful_rounds = len(results)
+        failed_rounds = len(rounds_to_process) - successful_rounds
+        
+    else:
+        # Process sequentially
+        round_results = {}
+        all_predictions = []
+        successful_rounds = 0
+        failed_rounds = 0
+        
+        for round_num in rounds_to_process:
+            result = process_single_round(
+                round_num,
+                target,
+                target_dir,
+                x_files_dir,
+                target_index,
+                ebm_params,
+                xgb_params,
+                base_output_dir,
+                fast_mode
             )
-
-            # Train and evaluate stacked model
-            result = train_and_evaluate_stacked_model(
-                X_train=X_train,
-                y_train=y_train,
-                X_test=X_test,
-                y_test=y_test,
-                ebm_params=ebm_params,
-                xgb_params=xgb_params
-            )
-
-            # Check if we skipped this round due to not enough valid data or errors
-            if result['ebm_model'] is None or result['xgb_model'] is None:
-                print(f"  Skipping round {round_num} due to model training errors or insufficient valid data.")
-                failed_rounds += 1
-                continue
             
-            # Add round number to predictions
-            result['predictions']['round'] = round_num
-
-            # Store results
-            round_results[round_num] = result['metrics']
-
-            # Update tracking metrics
-            all_metrics['mae'].append(result['metrics']['mae'])
-            all_metrics['rmse'].append(result['metrics']['rmse'])
-
-            # Add to all predictions for overall R² calculation
-            all_predictions.append(result['predictions'])
-
-            # Print round results
-            print(f"  MAE: {result['metrics']['mae']:.4f}")
-            print(f"  RMSE: {result['metrics']['rmse']:.4f}")
-
-            if 'rows_removed' in result:
-                print(f"  Rows removed: {result['rows_removed']['train']} train, {result['rows_removed']['test']} test")
-
-            # Save predictions
-            pred_df = result['predictions']
-            pred_df.to_csv(os.path.join(index_output_dir, f"round_{round_num}_predictions.csv"), index=False)
-
-            # Create and save plot
-            plt.figure(figsize=(15, 10))
-
-            # Plot 1: Actual vs All Predictions
-            plt.subplot(2, 2, 1)
-            plt.plot(pred_df['timestamp'], pred_df['actual'], 'b-', label='Actual')
-            plt.plot(pred_df['timestamp'], pred_df['predicted'], 'r--', label='Final Prediction')
-            plt.plot(pred_df['timestamp'], pred_df['ebm_pred'], 'g-.', label='EBM Prediction')
-            plt.plot(pred_df['timestamp'], pred_df['xgb_pred'], 'm:', label='XGB Residual')
-            plt.title(f'Round {round_num} - Actual vs Predictions')
-            plt.ylabel('Price')
-            plt.legend()
-            plt.xticks(rotation=45)
-            plt.grid(True)
-
-            # Plot 2: Scatter plot to visualize final prediction correlation
-            plt.subplot(2, 2, 2)
-            plt.scatter(pred_df['actual'], pred_df['predicted'])
-            plt.xlabel('Actual')
-            plt.ylabel('Final Prediction')
-
-            # Calculate round-specific R² for the plot title only
-            if np.var(pred_df['actual']) > 0:
-                r2 = r2_score(pred_df['actual'], pred_df['predicted'])
-                plt.title(f'Round {round_num} Final Prediction (R² = {r2:.4f})')
+            if result is not None:
+                round_results[round_num] = result['metrics']
+                all_predictions.append(result['predictions'])
+                successful_rounds += 1
             else:
-                plt.title(f'Round {round_num} Final Prediction (R² undefined)')
-
-            min_val = min(pred_df['actual'].min(), pred_df['predicted'].min())
-            max_val = max(pred_df['actual'].max(), pred_df['predicted'].max())
-            plt.plot([min_val, max_val], [min_val, max_val], 'g-', alpha=0.5)  # Perfect prediction line
-            plt.grid(True)
-
-            # Plot 3: EBM Predictions Correlation
-            plt.subplot(2, 2, 3)
-            plt.scatter(pred_df['actual'], pred_df['ebm_pred'])
-            plt.xlabel('Actual')
-            plt.ylabel('EBM Prediction')
-            if np.var(pred_df['actual']) > 0:
-                r2_ebm = r2_score(pred_df['actual'], pred_df['ebm_pred'])
-                plt.title(f'EBM Base Prediction (R² = {r2_ebm:.4f})')
-            else:
-                plt.title('EBM Base Prediction (R² undefined)')
-            plt.plot([min_val, max_val], [min_val, max_val], 'g-', alpha=0.5)
-            plt.grid(True)
-
-            # Plot 4: Residuals
-            plt.subplot(2, 2, 4)
-            residuals = pred_df['actual'] - pred_df['ebm_pred']
-            plt.scatter(pred_df['actual'], residuals)
-            plt.axhline(y=0, color='r', linestyle='-')
-            plt.xlabel('Actual')
-            plt.ylabel('Residuals (Actual - EBM)')
-            plt.title('Residuals vs Actual')
-            plt.grid(True)
-
-            plt.tight_layout()
-            plt.savefig(os.path.join(index_output_dir, f"round_{round_num}_plot.png"))
-            plt.close()
-
-            successful_rounds += 1
-
-        except Exception as e:
-            print(f"Error processing round {round_num}: {str(e)}")
-            failed_rounds += 1
-            continue
+                failed_rounds += 1
+    
+    total_time = time.time() - start_time_all
+    avg_time_per_round = total_time / max(1, successful_rounds)
+    
+    print(f"\nTotal processing time: {total_time:.2f} seconds ({total_time/60:.2f} minutes)")
+    print(f"Average time per round: {avg_time_per_round:.2f} seconds")
     
     # Check if we have any successful rounds
-    if not all_metrics['mae']:
+    if not round_results:
         print(f"No successful rounds for target {target}. All {failed_rounds} rounds failed.")
 
         # Save a minimal summary
@@ -488,7 +578,8 @@ def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
             'processed_rounds': failed_rounds + successful_rounds,
             'successful_rounds': successful_rounds,
             'failed_rounds': failed_rounds,
-            'error': "All rounds failed"
+            'error': "All rounds failed",
+            'total_time': total_time
         }
 
         with open(os.path.join(index_output_dir, 'summary.json'), 'w') as f:
@@ -517,8 +608,8 @@ def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
         # Save combined predictions
         combined_predictions.to_csv(os.path.join(index_output_dir, "all_predictions.csv"), index=False)
 
-        # Create overall correlation plots
-        plt.figure(figsize=(15, 12))
+        # Create overall correlation plot
+        plt.figure(figsize=(12, 10))
         
         # Plot 1: Overall Correlation - Final Prediction
         plt.subplot(2, 2, 1)
@@ -550,32 +641,34 @@ def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
         plt.plot([min_val, max_val], [min_val, max_val], 'g-', alpha=0.5)
         plt.grid(True)
 
-        # Plot 3: Model Contribution - Predictions vs Time
+        # Plot 3: Residual Analysis
         plt.subplot(2, 2, 3)
-        # Get a subset of data points to avoid overcrowded plot
-        sample_size = min(5000, len(combined_predictions))
-        sample_indices = np.linspace(0, len(combined_predictions)-1, sample_size, dtype=int)
-        sample_df = combined_predictions.iloc[sample_indices]
-        
-        plt.stackplot(sample_df.index, 
-                     [sample_df['ebm_pred'], sample_df['xgb_pred']], 
-                     labels=['EBM Base Prediction', 'XGBoost Residual Correction'],
-                     alpha=0.7)
-        plt.plot(sample_df.index, sample_df['actual'], 'k-', label='Actual', linewidth=1)
-        plt.legend(loc='upper right')
-        plt.title('Model Contribution Over Sample Points')
-        plt.xlabel('Sample Index')
-        plt.ylabel('Value')
-        plt.grid(True)
-
-        # Plot 4: Residual Analysis
-        plt.subplot(2, 2, 4)
         final_residuals = overall_actual - overall_predicted
         plt.hist(final_residuals, bins=50)
         plt.title(f'Final Residuals Distribution (Mean: {np.mean(final_residuals):.4f})')
         plt.xlabel('Residual Value')
         plt.ylabel('Frequency')
         plt.grid(True)
+        
+        # Plot 4: Model Contribution Comparison
+        plt.subplot(2, 2, 4)
+        ebm_r2 = overall_r2_ebm
+        combined_r2 = overall_r2
+        improvement = combined_r2 - ebm_r2
+        
+        bars = ['EBM Only', 'EBM+XGBoost', 'Improvement']
+        values = [ebm_r2, combined_r2, improvement]
+        colors = ['blue', 'green', 'red']
+        
+        plt.bar(bars, values, color=colors)
+        plt.title('Model R² Comparison')
+        plt.ylabel('R² Score')
+        
+        # Add value labels on bars
+        for i, v in enumerate(values):
+            plt.text(i, v + 0.01, f'{v:.4f}', ha='center')
+        
+        plt.grid(axis='y')
 
         # Add summary statistics to plot
         overall_mae = mean_absolute_error(overall_actual, overall_predicted)
@@ -583,23 +676,7 @@ def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
         overall_mae_ebm = mean_absolute_error(overall_actual, overall_ebm_pred)
         overall_rmse_ebm = np.sqrt(mean_squared_error(overall_actual, overall_ebm_pred))
 
-        stats_text = (
-            f"Overall Statistics:\n"
-            f"Final Model:\n"
-            f"  MAE: {overall_mae:.4f}\n"
-            f"  RMSE: {overall_rmse:.4f}\n"
-            f"  R²: {overall_r2:.4f}\n"
-            f"EBM Base Model:\n"
-            f"  MAE: {overall_mae_ebm:.4f}\n"
-            f"  RMSE: {overall_rmse_ebm:.4f}\n"
-            f"  R²: {overall_r2_ebm:.4f}\n"
-            f"Samples: {len(overall_actual)}"
-        )
-
-        plt.figtext(0.5, 0.01, stats_text, fontsize=12, 
-                   bbox=dict(facecolor='white', alpha=0.8), ha='center')
-
-        plt.tight_layout(rect=[0, 0.05, 1, 0.95])  # Adjust layout for additional text at bottom
+        plt.tight_layout()
         plt.savefig(os.path.join(index_output_dir, "overall_correlation.png"))
         plt.close()
     else:
@@ -610,13 +687,21 @@ def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
         overall_mae_ebm = float('nan')
         overall_rmse_ebm = float('nan')
 
+    # Extract MAE and RMSE values
+    all_metrics = {
+        'mae': [metrics['mae'] for metrics in round_results.values() if 'mae' in metrics],
+        'rmse': [metrics['rmse'] for metrics in round_results.values() if 'rmse' in metrics],
+        'training_time': [metrics.get('training_time', 0) for metrics in round_results.values()]
+    }
+
     # Calculate summary statistics
     summary = {
-        'avg_mae': np.mean(all_metrics['mae']),
-        'avg_rmse': np.mean(all_metrics['rmse']),
-        'std_mae': np.std(all_metrics['mae']),
-        'std_rmse': np.std(all_metrics['rmse']),
-        'min_mae': np.min(all_metrics['mae']),
+        'avg_mae': np.mean(all_metrics['mae']) if all_metrics['mae'] else float('nan'),
+        'avg_rmse': np.mean(all_metrics['rmse']) if all_metrics['rmse'] else float('nan'),
+        'std_mae': np.std(all_metrics['mae']) if all_metrics['mae'] else float('nan'),
+        'std_rmse': np.std(all_metrics['rmse']) if all_metrics['rmse'] else float('nan'),
+        'min_mae': np.min(all_metrics['mae']) if all_metrics['mae'] else float('nan'),
+        'avg_training_time': np.mean(all_metrics['training_time']) if all_metrics['training_time'] else float('nan'),
         'overall_r2': overall_r2,
         'overall_r2_ebm': overall_r2_ebm,
         'overall_mae': overall_mae,
@@ -625,7 +710,10 @@ def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
         'overall_rmse_ebm': overall_rmse_ebm,
         'processed_rounds': failed_rounds + successful_rounds,
         'successful_rounds': successful_rounds,
-        'failed_rounds': failed_rounds
+        'failed_rounds': failed_rounds,
+        'total_time': total_time,
+        'estimated_full_time': total_time * ((end_round - start_round) / step) / len(rounds_to_process) 
+                                if rounds_to_process else float('nan')
     }
 
     # Print summary
@@ -637,6 +725,11 @@ def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
     print(f"Overall MAE: {summary['overall_mae']:.4f}")
     print(f"Overall RMSE: {summary['overall_rmse']:.4f}")
     print(f"EBM Base Model Overall R²: {summary['overall_r2_ebm']:.4f}")
+    print(f"Average training time per round: {summary['avg_training_time']:.2f} seconds")
+    print(f"Total processing time: {summary['total_time']:.2f} seconds ({summary['total_time']/60:.2f} minutes)")
+    
+    if sample_size is not None:
+        print(f"Estimated time for all {(end_round - start_round) // step} rounds: {summary['estimated_full_time']/60:.2f} minutes")
 
     # Create MAE/RMSE summary plots
     if round_results:
@@ -645,25 +738,27 @@ def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
         # Plot MAE across rounds
         plt.subplot(1, 2, 1)
         rounds = list(round_results.keys())
-        mae_values = [round_results[r]['mae'] for r in rounds]
-        plt.bar(rounds, mae_values)
-        plt.axhline(y=overall_mae, color='r', linestyle='-', label=f'Overall MAE: {overall_mae:.4f}')
-        plt.xlabel('Round Number')
-        plt.ylabel('MAE')
-        plt.title('MAE Values Across Rounds')
-        plt.grid(True, axis='y')
-        plt.legend()
+        mae_values = [round_results[r]['mae'] for r in rounds if 'mae' in round_results[r]]
+        if mae_values:
+            plt.bar(rounds, mae_values)
+            plt.axhline(y=overall_mae, color='r', linestyle='-', label=f'Overall MAE: {overall_mae:.4f}')
+            plt.xlabel('Round Number')
+            plt.ylabel('MAE')
+            plt.title('MAE Values Across Rounds')
+            plt.grid(True, axis='y')
+            plt.legend()
 
         # Plot RMSE across rounds
         plt.subplot(1, 2, 2)
-        rmse_values = [round_results[r]['rmse'] for r in rounds]
-        plt.bar(rounds, rmse_values)
-        plt.axhline(y=overall_rmse, color='r', linestyle='-', label=f'Overall RMSE: {overall_rmse:.4f}')
-        plt.xlabel('Round Number')
-        plt.ylabel('RMSE')
-        plt.title('RMSE Values Across Rounds')
-        plt.grid(True, axis='y')
-        plt.legend()
+        rmse_values = [round_results[r]['rmse'] for r in rounds if 'rmse' in round_results[r]]
+        if rmse_values:
+            plt.bar(rounds, rmse_values)
+            plt.axhline(y=overall_rmse, color='r', linestyle='-', label=f'Overall RMSE: {overall_rmse:.4f}')
+            plt.xlabel('Round Number')
+            plt.ylabel('RMSE')
+            plt.title('RMSE Values Across Rounds')
+            plt.grid(True, axis='y')
+            plt.legend()
 
         plt.tight_layout()
         plt.savefig(os.path.join(index_output_dir, "metrics_summary.png"))
@@ -720,42 +815,46 @@ def main():
     parser.add_argument('--target-index', type=int, default=None,
                         help='Index of target to process (0 or 1, default: run both)')
     
+    parser.add_argument('--no-parallel', action='store_true',
+                        help='Disable parallel processing')
+    
+    parser.add_argument('--max-workers', type=int, default=None,
+                        help='Maximum number of parallel workers (default: auto)')
+    
+    parser.add_argument('--no-fast-mode', action='store_true',
+                        help='Disable fast mode (use full EBM parameters)')
+    
+    parser.add_argument('--sample-size', type=int, default=0,
+                        help='Number of rounds to sample for processing (default: 0 = process all rounds)')
+    
     # EBM parameters
-    parser.add_argument('--ebm-max-bins', type=int, default=256,
-                       help='Max bins for EBM (default: 256)')
+    parser.add_argument('--ebm-interactions', type=int, default=0,
+                       help='Number of interactions for EBM (default: 0)')
     
-    parser.add_argument('--ebm-interactions', type=int, default=10,
-                       help='Number of interactions for EBM (default: 10)')
-    
-    parser.add_argument('--ebm-learning-rate', type=float, default=0.01,
-                       help='Learning rate for EBM (default: 0.01)')
+    parser.add_argument('--ebm-bins', type=int, default=64,
+                       help='Number of bins for EBM (default: 64)')
     
     # XGBoost parameters
-    parser.add_argument('--xgb-n-estimators', type=int, default=500,
-                       help='Number of estimators for XGBoost (default: 500)')
+    parser.add_argument('--xgb-n-estimators', type=int, default=100,
+                       help='Number of estimators for XGBoost (default: 100)')
     
-    parser.add_argument('--xgb-learning-rate', type=float, default=0.05,
-                       help='Learning rate for XGBoost (default: 0.05)')
-    
-    parser.add_argument('--xgb-max-depth', type=int, default=6,
-                       help='Max depth for XGBoost (default: 6)')
-    
-    parser.add_argument('--xgb-subsample', type=float, default=0.8,
-                       help='Subsample ratio for XGBoost (default: 0.8)')
-    
-    parser.add_argument('--xgb-colsample-bytree', type=float, default=0.9,
-                        help='Colsample by tree for XGBoost (default: 0.9)')
+    parser.add_argument('--xgb-learning-rate', type=float, default=0.1,
+                       help='Learning rate for XGBoost (default: 0.1)')
     
     args = parser.parse_args()
     
     # Configure EBM parameters
     ebm_params = {
-        'max_bins': args.ebm_max_bins,
-        'max_interaction_bins': 32,
+        'max_bins': args.ebm_bins,
+        'max_interaction_bins': max(16, args.ebm_bins // 4),
         'interactions': args.ebm_interactions,
-        'learning_rate': args.ebm_learning_rate,
-        'min_samples_leaf': 5,
-        'random_state': 42
+        'learning_rate': 0.05,
+        'min_samples_leaf': 10,
+        'random_state': 42,
+        'outer_bags': 4,
+        'inner_bags': 0,
+        'max_rounds': 1000,
+        'early_stopping_rounds': 50
     }
     
     # Configure XGBoost parameters
@@ -763,10 +862,11 @@ def main():
         'objective': 'reg:squarederror',
         'n_estimators': args.xgb_n_estimators,
         'learning_rate': args.xgb_learning_rate,
-        'max_depth': args.xgb_max_depth,
-        'subsample': args.xgb_subsample,
-        'colsample_bytree': args.xgb_colsample_bytree,
-        'random_state': 42
+        'max_depth': 6,
+        'subsample': 0.8,
+        'colsample_bytree': 0.9,
+        'random_state': 42,
+        'early_stopping_rounds': 10
     }
     
     # Get available targets
@@ -807,6 +907,9 @@ def main():
                 # Create output directory
                 os.makedirs(args.output, exist_ok=True)
                 
+                # Determine sample size (0 means process all - this is the default)
+                sample_size = None if args.sample_size == 0 else args.sample_size
+                
                 run_cv_for_target_stacked(
                     target=target,
                     start_round=args.start,
@@ -816,10 +919,18 @@ def main():
                     xgb_params=xgb_params,
                     output_dir=args.output,
                     organized_dir=args.organized_dir,
-                    target_index=target_index
+                    target_index=target_index,
+                    parallel=not args.no_parallel,
+                    max_workers=args.max_workers,
+                    fast_mode=not args.no_fast_mode,
+                    sample_size=sample_size
                 )
         except Exception as e:
             print(f"Error processing target {target}: {str(e)}")
 
 if __name__ == "__main__":
+    # Set a higher recursion limit for complex models
+    import sys
+    sys.setrecursionlimit(10000)
+    
     main()
