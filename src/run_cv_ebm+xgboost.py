@@ -311,7 +311,7 @@ def train_and_evaluate_stacked_model(X_train, y_train, X_test, y_test, ebm_param
         }
 
 def process_single_round(round_num, target, target_dir, x_files_dir, target_index, 
-                        ebm_params, xgb_params, output_dir, fast_mode):
+                        ebm_params, xgb_params, index_output_dir, fast_mode):
     """
     Process a single CV round - helper function for parallelization.
     
@@ -357,14 +357,9 @@ def process_single_round(round_num, target, target_dir, x_files_dir, target_inde
         if 'rows_removed' in result:
             print(f"  Rows removed: {result['rows_removed']['train']} train, {result['rows_removed']['test']} test")
 
-        # Get the timestamp from the function parameters or generate one
-        # Using partial function, we don't have access to timestamp directly,
-        # so we'll extract it from the index_output_dir which will be created in the main function
-        round_output_dir = os.path.join(output_dir, f"{target}_ind_{target_index}_{time.strftime('%Y%m%d-%H%M%S')}")
-        os.makedirs(round_output_dir, exist_ok=True)
-        
+        # Save predictions to the shared index output directory
         pred_df = result['predictions']
-        pred_df.to_csv(os.path.join(round_output_dir, f"round_{round_num}_predictions.csv"), index=False)
+        pred_df.to_csv(os.path.join(index_output_dir, f"round_{round_num}_predictions.csv"), index=False)
 
         # Create basic plot (we'll generate detailed plots later)
         plt.figure(figsize=(12, 6))
@@ -375,7 +370,7 @@ def process_single_round(round_num, target, target_dir, x_files_dir, target_inde
         plt.xticks(rotation=45)
         plt.grid(True)
         plt.tight_layout()
-        plt.savefig(os.path.join(round_output_dir, f"round_{round_num}_plot.png"))
+        plt.savefig(os.path.join(index_output_dir, f"round_{round_num}_plot.png"))
         plt.close()
 
         return {
@@ -513,7 +508,7 @@ def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
             target_index=target_index,
             ebm_params=ebm_params,
             xgb_params=xgb_params,
-            output_dir=base_output_dir,
+            index_output_dir=index_output_dir,
             fast_mode=fast_mode
         )
         
@@ -544,6 +539,7 @@ def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
         failed_rounds = 0
         
         for round_num in rounds_to_process:
+            # Use the shared index output dir
             result = process_single_round(
                 round_num,
                 target,
@@ -552,7 +548,7 @@ def run_cv_for_target_stacked(target, start_round=0, end_round=None, step=1,
                 target_index,
                 ebm_params,
                 xgb_params,
-                base_output_dir,
+                index_output_dir,
                 fast_mode
             )
             
