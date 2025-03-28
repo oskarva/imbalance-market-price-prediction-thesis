@@ -1,6 +1,6 @@
 """
 Enhanced script to run cross-validation with overall R² calculation across all predictions.
-Added parameter optimization capabilities and target index selection.
+Updated with a simplified parameter testing approach instead of complex optimization.
 """
 import os
 import argparse
@@ -12,7 +12,6 @@ from pathlib import Path
 import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
-import optuna
 from functools import partial
 
 def get_available_targets(organized_dir="./src/data/csv", areas=["no1", "no2", "no3", "no4", "no5"]):
@@ -21,6 +20,7 @@ def get_available_targets(organized_dir="./src/data/csv", areas=["no1", "no2", "
     
     Args:
         organized_dir: Base directory for organized files
+        areas: List of area directories to check
         
     Returns:
         List of available targets (directory names)
@@ -258,10 +258,13 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
     
     # Create a unique directory for the run
     if output_dir is None:
-        index_output_dir = f"./results/{target}_run_{timestamp}_ind_{target_index}"
+        # Use the new directory structure
+        base_dir = f"./results/xgboost/{timestamp}"
+        os.makedirs(base_dir, exist_ok=True)
+        index_output_dir = f"{base_dir}/{target}_ind_{target_index}"
     else:
-        # If output_dir is provided, append the index
-        index_output_dir = f"{output_dir}_ind_{target_index}"
+        # Use the provided output directory directly
+        index_output_dir = output_dir
     
     # Create output directory
     os.makedirs(index_output_dir, exist_ok=True)
@@ -545,11 +548,10 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
         'round_results': round_results
     }
 
-def optimize_parameters_for_target(target, start_round=0, end_round=None, step=1,
-                              organized_dir="./src/data/csv", target_index=0, 
-                              n_trials=50, evaluation_rounds=None, metric='r2'):
+def try_parameter_sets_for_target(target, start_round=0, end_round=None, step=1,
+                               organized_dir="./src/data/csv", target_index=0):
     """
-    Optimize hyperparameters for a specific target using Optuna.
+    Try three different parameter sets for a specific target, running full cross-validation for each.
     
     Args:
         target: Target directory name
@@ -558,232 +560,148 @@ def optimize_parameters_for_target(target, start_round=0, end_round=None, step=1
         step: Step size for processing rounds
         organized_dir: Base directory for organized files
         target_index: Index of target variable (0 or 1) for regulation up/down
-        n_trials: Number of optimization trials
-        evaluation_rounds: Number of rounds to use for evaluation (None = all rounds)
-        metric: Metric to optimize ('r2', 'mae', or 'rmse')
         
     Returns:
-        Dictionary with optimized parameters and study results
+        Dictionary with results summary for each parameter set
     """
-    # Set up paths
-    target_dir = os.path.join(organized_dir, target)
-    x_files_dir = os.path.join(organized_dir, target)
-    
-    # Check if target directory exists
-    if not os.path.isdir(target_dir):
-        raise ValueError(f"Target directory not found: {target_dir}")
-    
-    # Get total number of rounds
-    total_rounds = get_cv_round_count(target_dir)
-    
-    # Set default end_round if not provided
-    if end_round is None:
-        end_round = total_rounds
-    else:
-        end_round = min(end_round, total_rounds)
-    
-    # Determine which rounds to use for evaluation
-    available_rounds = list(range(start_round, end_round, step))
-    
-    # If evaluation_rounds is None or exceeds available rounds, use all rounds
-    # This is the key change - we default to using ALL rounds for evaluation
-    if evaluation_rounds is None or evaluation_rounds >= len(available_rounds):
-        evaluation_rounds = available_rounds
-    else:
-        # Only if specifically requested, select a subset of rounds
-        evaluation_round_indices = np.linspace(0, len(available_rounds)-1, evaluation_rounds, dtype=int)
-        evaluation_rounds = [available_rounds[i] for i in evaluation_round_indices]
-    
-    print(f"\nOptimizing parameters for target: {target}, index: {target_index}")
-    print(f"Using {len(evaluation_rounds)} rounds for evaluation")
-    
-    # Load data for all evaluation rounds in advance
-    round_data = {}
-    for round_num in evaluation_rounds:
-        try:
-            X_train, y_train, X_test, y_test = load_cv_round(
-                cv_round=round_num,
-                target_dir=target_dir,
-                x_files_dir=x_files_dir,
-                target_index=target_index
-            )
-            
-            # Handle whether y_train/y_test are Series or DataFrame
-            if isinstance(y_train, pd.DataFrame):
-                y_train_vals = y_train.iloc[:, 0].values
-            else:  # It's a Series
-                y_train_vals = y_train.values
-                
-            if isinstance(y_test, pd.DataFrame):
-                y_test_vals = y_test.iloc[:, 0].values
-            else:  # It's a Series
-                y_test_vals = y_test.values
-            
-            # Check for and handle NaN or infinity values in training data
-            is_valid_train = ~(np.isnan(y_train_vals) | np.isinf(y_train_vals) | (np.abs(y_train_vals) > 1e10))
-            if not np.all(is_valid_train):
-                # Filter out invalid values
-                valid_indices = np.where(is_valid_train)[0]
-                X_train_clean = X_train.iloc[valid_indices]
-                y_train_vals_clean = y_train_vals[valid_indices]
-            else:
-                X_train_clean = X_train
-                y_train_vals_clean = y_train_vals
-            
-            # Check for and handle NaN or infinity values in test data
-            is_valid_test = ~(np.isnan(y_test_vals) | np.isinf(y_test_vals) | (np.abs(y_test_vals) > 1e10))
-            if not np.all(is_valid_test):
-                # Filter out invalid values
-                valid_indices = np.where(is_valid_test)[0]
-                X_test_clean = X_test.iloc[valid_indices]
-                y_test_vals_clean = y_test_vals[valid_indices]
-            else:
-                X_test_clean = X_test
-                y_test_vals_clean = y_test_vals
-            
-            # Store the cleaned data
-            round_data[round_num] = {
-                'X_train': X_train_clean,
-                'y_train': y_train_vals_clean,
-                'X_test': X_test_clean,
-                'y_test': y_test_vals_clean
-            }
-            
-        except Exception as e:
-            print(f"Error loading data for round {round_num}: {e}")
-            # Skip this round
-            continue
-    
-    if not round_data:
-        raise ValueError(f"Could not load data for any evaluation rounds for target {target}")
-    
-    def objective(trial):
-        """Optuna objective function for hyperparameter optimization"""
-        # Define the hyperparameter search space
-        param = {
-            'objective': 'reg:absoluteerror',  # Fixed based on your findings
-            'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
-            'max_depth': trial.suggest_int('max_depth', 4, 12),
-            'n_estimators': trial.suggest_int('n_estimators', 300, 1000),
-            'subsample': trial.suggest_float('subsample', 0.6, 0.9),
-            'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
-            'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
-            'gamma': trial.suggest_float('gamma', 0, 5),
+    # Define the parameter sets
+    parameter_sets = {
+        'set1_robust': {
+            'objective': 'reg:absoluteerror',
+            'learning_rate': 0.01,
+            'n_estimators': 1000,
+            'max_depth': 6,
+            'subsample': 0.9,
+            'colsample_bytree': 0.9,
+            'min_child_weight': 5,
+            'random_state': 42
+        },
+        'set2_regularized': {
+            'objective': 'reg:squarederror',
+            'learning_rate': 0.05,
+            'n_estimators': 500,
+            'max_depth': 4,
+            'subsample': 0.8, 
+            'colsample_bytree': 0.8,
+            'gamma': 1.0,
+            'random_state': 42
+        },
+        'set3_outlier_robust': {
+            'objective': 'reg:pseudohubererror',
+            'learning_rate': 0.03,
+            'n_estimators': 700,
+            'max_depth': 5,
+            'subsample': 0.85,
+            'colsample_bytree': 0.85,
+            'random_state': 42
+        },
+        'set4_extreme_events': {
+            'objective': 'reg:quantileerror',
+            'quantile_alpha': 0.5,  # Median regression as base
+            'learning_rate': 0.02,
+            'n_estimators': 1200,
+            'max_depth': 7,
+            'subsample': 0.7,
+            'colsample_bytree': 0.7,
+            'min_child_weight': 3,
+            'random_state': 42
+        },
+        'set5_ensemble_diverse': {
+            'objective': 'reg:squarederror',
+            'learning_rate': 0.01,
+            'n_estimators': 800,
+            'max_depth': 5,
+            'subsample': 0.75,
+            'colsample_bytree': 0.75,
+            'colsample_bylevel': 0.75,  # Additional randomization
+            'gamma': 0.5,
+            'reg_alpha': 0.1,  # L1 regularization
+            'reg_lambda': 1.0,  # L2 regularization
             'random_state': 42
         }
-        
-        # Evaluate the model across all evaluation rounds
-        metrics_results = {
-            'r2': [],
-            'mae': [],
-            'rmse': []
-        }
-        
-        for round_num, data in round_data.items():
-            # Train model
-            model = xgb.XGBRegressor(**param)
-            model.fit(data['X_train'], data['y_train'])
-            
-            # Make predictions
-            y_pred = model.predict(data['X_test'])
-            
-            # Calculate metrics
-            mae = mean_absolute_error(data['y_test'], y_pred)
-            rmse = np.sqrt(mean_squared_error(data['y_test'], y_pred))
-            
-            # Handle potential division by zero in R² calculation
-            if np.var(data['y_test']) > 0:
-                r2 = r2_score(data['y_test'], y_pred)
-            else:
-                r2 = 0  # Default value if variance is zero
-            
-            metrics_results['r2'].append(r2)
-            metrics_results['mae'].append(mae)
-            metrics_results['rmse'].append(rmse)
-        
-        # Calculate average metrics
-        avg_r2 = np.mean(metrics_results['r2'])
-        avg_mae = np.mean(metrics_results['mae'])
-        avg_rmse = np.mean(metrics_results['rmse'])
-        
-        # Return the appropriate metric for optimization
-        if metric == 'r2':
-            return avg_r2  # Higher is better
-        elif metric == 'mae':
-            return -avg_mae  # Lower is better, so negate for maximization
-        elif metric == 'rmse':
-            return -avg_rmse  # Lower is better, so negate for maximization
-        else:
-            raise ValueError(f"Unknown metric: {metric}")
-    
-    # Create a study with the appropriate direction
-    if metric == 'r2':
-        study = optuna.create_study(direction='maximize')
-    else:  # 'mae' or 'rmse'
-        study = optuna.create_study(direction='maximize')  # We negate the values in the objective
-    
-    # Run the optimization
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
-    
-    # Get the best parameters
-    best_params = study.best_params
-    
-    # Add the fixed parameters
-    best_params['objective'] = 'reg:absoluteerror'
-    best_params['random_state'] = 42
-    
-    # Print the best parameters
-    print("\nBest parameters found:")
-    for key, value in best_params.items():
-        print(f"  {key}: {value}")
-    
-    print(f"\nBest {metric} value: ", end="")
-    if metric == 'r2':
-        print(f"{study.best_value:.4f}")
-    elif metric == 'mae':
-        print(f"{-study.best_value:.4f}")
-    elif metric == 'rmse':
-        print(f"{-study.best_value:.4f}")
-    
-    # Set up output directory with timestamp
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    output_dir = f"./results/{target}_optim_{timestamp}_ind_{target_index}"
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Save the optimization results
-    optimization_results = {
-        'best_params': best_params,
-        'best_value': study.best_value if metric == 'r2' else -study.best_value,
-        'metric': metric,
-        'target': target,
-        'target_index': target_index,
-        'evaluation_rounds': evaluation_rounds,
-        'n_trials': n_trials,
-        'timestamp': timestamp
     }
     
-    with open(os.path.join(output_dir, 'optimization_results.json'), 'w') as f:
-        json.dump(optimization_results, f, indent=4)
+    # Get timestamp for the run
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
     
-    # Create parameter importance plot
-    try:
-        importance = optuna.visualization.plot_param_importances(study)
-        # Save the plot as an image
-        import plotly.io as pio
-        pio.write_image(importance, os.path.join(output_dir, 'param_importances.png'))
-    except Exception as e:
-        print(f"Could not create parameter importance plot: {e}")
+    # Set up base output directory
+    base_output_dir = f"./results/xgboost/{timestamp}"
+    os.makedirs(base_output_dir, exist_ok=True)
     
-    # Create optimization history plot
-    try:
-        history = optuna.visualization.plot_optimization_history(study)
-        # Save the plot as an image
-        pio.write_image(history, os.path.join(output_dir, 'optimization_history.png'))
-    except Exception as e:
-        print(f"Could not create optimization history plot: {e}")
+    # Store results for each parameter set
+    optimization_results = {}
+    
+    # Try each parameter set
+    for param_name, params in parameter_sets.items():
+        print(f"\n{'='*50}")
+        print(f"Trying parameter set: {param_name} for target: {target}, index: {target_index}")
+        print(f"Parameters: {params}")
+        print(f"{'='*50}")
+        
+        # Run cross-validation with these parameters
+        output_dir = f"{base_output_dir}/{target}_{param_name}_ind_{target_index}"
+        
+        result = run_cv_for_target(
+            target=target,
+            start_round=start_round,
+            end_round=end_round,
+            step=step,
+            model_params=params,
+            output_dir=output_dir, 
+            organized_dir=organized_dir,
+            target_index=target_index
+        )
+        
+        # Store the result
+        optimization_results[param_name] = {
+            'parameters': params,
+            'summary': result['summary'] if 'summary' in result else result
+        }
+    
+    # Create a comparison summary
+    comparison = {
+        'target': target,
+        'target_index': target_index,
+        'timestamp': timestamp,
+        'parameter_sets': list(parameter_sets.keys()),
+        'metrics': {}
+    }
+    
+    # Extract key metrics for comparison
+    for param_name, result in optimization_results.items():
+        if 'summary' in result and isinstance(result['summary'], dict):
+            summary = result['summary']
+            comparison['metrics'][param_name] = {
+                'overall_r2': summary.get('overall_r2', float('nan')),
+                'overall_mae': summary.get('overall_mae', float('nan')),
+                'overall_rmse': summary.get('overall_rmse', float('nan'))
+            }
+    
+    # Determine best parameter set based on R²
+    if comparison['metrics']:
+        best_r2 = -float('inf')
+        best_param_set = None
+        
+        for param_name, metrics in comparison['metrics'].items():
+            r2 = metrics.get('overall_r2', -float('inf'))
+            if r2 > best_r2 and not np.isnan(r2):
+                best_r2 = r2
+                best_param_set = param_name
+        
+        comparison['best_parameter_set'] = best_param_set
+        comparison['best_r2'] = best_r2
+    
+    # Save comparison summary
+    comparison_path = os.path.join(base_output_dir, f"{target}_ind_{target_index}_comparison.json")
+    with open(comparison_path, 'w') as f:
+        json.dump(comparison, f, indent=4)
+    
+    print(f"\nComparison of parameter sets saved to: {comparison_path}")
+    
+    if 'best_parameter_set' in comparison:
+        print(f"Best parameter set: {comparison['best_parameter_set']} with R² = {comparison['best_r2']:.4f}")
     
     return optimization_results
-
 
 def main():
     parser = argparse.ArgumentParser(description='Run cross-validation with overall R² calculation')
@@ -800,8 +718,8 @@ def main():
     parser.add_argument('--step', type=int, default=1,
                        help='Step size for processing rounds (default: 1)')
     
-    parser.add_argument('--output', type=str, default='./results',
-                       help='Base directory to save results (default: ./results)')
+    parser.add_argument('--output', type=str, default=None,
+                       help='Base directory to save results (default: ./results/xgboost/DATE)')
     
     parser.add_argument('--organized-dir', type=str, default='./src/data/csv',
                        help='Base directory for organized files (default: ./src/data/csv)')
@@ -828,16 +746,7 @@ def main():
                         help='Index of target to process (0 or 1, default: run both)')
     
     parser.add_argument('--optimize', action='store_true',
-                        help='Run hyperparameter optimization instead of cross-validation')
-    
-    parser.add_argument('--n-trials', type=int, default=50,
-                        help='Number of trials for hyperparameter optimization (default: 50)')
-    
-    parser.add_argument('--evaluation-rounds', type=int, default=None, 
-                        help='Number of rounds to use for evaluation during optimization (default: all rounds)')
-    
-    parser.add_argument('--metric', type=str, default='r2', choices=['r2', 'mae', 'rmse'],
-                        help='Metric to optimize (default: r2)')
+                        help='Try all three parameter sets and compare results')
     
     parser.add_argument('--colsample_bytree', type=float, default=0.9,
                         help='Colsample by tree for XGBoost (default: 0.9)')
@@ -899,26 +808,24 @@ def main():
             
             for target_index in target_indices:
                 if args.optimize:
-                    # Run hyperparameter optimization
-                    optimize_parameters_for_target(
+                    # Try all three parameter sets
+                    try_parameter_sets_for_target(
                         target=target,
                         start_round=args.start,
                         end_round=args.end,
                         step=args.step,
                         organized_dir=args.organized_dir,
-                        target_index=target_index,
-                        n_trials=args.n_trials,
-                        evaluation_rounds=args.evaluation_rounds,
-                        metric=args.metric
+                        target_index=target_index
                     )
                 else:
-                    # Run cross-validation
+                    # Run cross-validation with specified parameters
                     run_cv_for_target(
                         target=target,
                         start_round=args.start,
                         end_round=args.end,
                         step=args.step,
                         model_params=model_params,
+                        output_dir=args.output,
                         organized_dir=args.organized_dir,
                         target_index=target_index
                     )
