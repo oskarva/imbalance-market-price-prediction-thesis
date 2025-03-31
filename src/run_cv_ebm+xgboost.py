@@ -840,11 +840,12 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
                          organized_dir="./src/data/csv", target_index=0,
                          parallel=True, max_workers=None, sample=None):
     """
-    Evaluate different XGBoost parameter sets for the residuals model using the best EBM model.
+    Evaluate different XGBoost parameter sets for the residuals model using round-specific EBM models.
+    Each round gets its own independently trained EBM model to avoid data leakage.
     
     Args:
         target: Target directory name
-        best_ebm_params: Parameters for the best EBM model
+        best_ebm_params: Parameters for the EBM model
         start_round: First CV round to process
         end_round: Last CV round to process (None = all available)
         step: Step size for processing rounds
@@ -928,54 +929,11 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
     else:
         rounds_to_process = list(range(start_round, end_round, step))
     
-    # First, train a global EBM model using all rounds
     print(f"\n{'='*80}")
-    print(f"Training global EBM model for target: {target}, index: {target_index}")
-    print(f"Using parameters: {best_ebm_params}")
+    print(f"Evaluating stacked models for target: {target}, index: {target_index}")
+    print(f"Using EBM parameters: {best_ebm_params}")
+    print(f"Each round will get its own independently trained EBM model to avoid data leakage")
     print(f"{'='*80}")
-    
-    # Load and combine data from all rounds
-    all_X_train = []
-    all_y_train = []
-    
-    for round_num in rounds_to_process:
-        try:
-            X_train, y_train, _, _ = load_cv_round(
-                cv_round=round_num,
-                target_dir=target_dir,
-                x_files_dir=x_files_dir,
-                target_index=target_index
-            )
-            all_X_train.append(X_train)
-            all_y_train.append(y_train)
-        except Exception as e:
-            print(f"Error loading round {round_num}: {e}")
-    
-    if not all_X_train:
-        raise ValueError("Could not load any rounds for training global EBM model")
-    
-    # Combine the data
-    X_train_combined = pd.concat(all_X_train)
-    
-    # Handle whether y_train items are Series or DataFrame
-    if isinstance(all_y_train[0], pd.DataFrame):
-        y_train_combined = pd.concat(all_y_train)
-    else:
-        y_train_combined = pd.concat([pd.DataFrame(y) for y in all_y_train])
-    
-    if isinstance(y_train_combined, pd.DataFrame):
-        y_train_vals = y_train_combined.iloc[:, 0].values
-    else:
-        y_train_vals = y_train_combined.values
-    
-    # Train global EBM model
-    global_ebm = ExplainableBoostingRegressor(**best_ebm_params)
-    global_ebm.fit(X_train_combined, y_train_vals)
-    
-    # Save the model
-    dump(global_ebm, os.path.join(xgb_output_dir, f"{target}_ind_{target_index}_global_ebm.joblib"))
-    
-    print(f"Global EBM model trained on {len(X_train_combined)} samples")
     
     # Store results for each XGBoost parameter set
     xgb_evaluation_results = {}
@@ -1022,7 +980,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
                 target_dir=target_dir,
                 x_files_dir=x_files_dir,
                 target_index=target_index,
-                ebm_model=global_ebm,
+                ebm_params=best_ebm_params,  
                 xgb_params=xgb_params
             )
             
@@ -1044,7 +1002,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
                     target_dir,
                     x_files_dir,
                     target_index,
-                    global_ebm,
+                    best_ebm_params,  
                     xgb_params
                 )
                 
@@ -1138,16 +1096,15 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
         plt.savefig(os.path.join(param_output_dir, 'stacked_model_performance.png'))
         plt.close()
         
-        # Save the model
-        dump(
-            {
-                'ebm_model': global_ebm,
-                'xgb_model': None,  # We don't save individual round models
-                'ebm_params': best_ebm_params,
-                'xgb_params': xgb_params
-            },
-            os.path.join(param_output_dir, f"{target}_ind_{target_index}_stacked_model.joblib")
-        )
+        # We won't save a single model since each round has its own model
+        # But we can save the parameters
+        model_params = {
+            'ebm_params': best_ebm_params,
+            'xgb_params': xgb_params
+        }
+        
+        with open(os.path.join(param_output_dir, 'model_params.json'), 'w') as f:
+            json.dump(model_params, f, indent=4)
         
         # Summarize results
         summary = {
@@ -1260,16 +1217,16 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
     print(f"Best XGBoost parameter set: {best_param_set} with R² improvement = {best_r2_improvement:.2f}%")
     print(f"{'='*80}")
     
-    # Save the best stacked model
-    best_stacked_model = {
-        'ebm_model': global_ebm,
+    # Save the best model parameters (not actual models since each round has its own)
+    best_model_params = {
         'ebm_params': best_ebm_params,
         'xgb_params': xgb_evaluation_results[best_param_set]['xgb_params'],
         'target': target,
         'target_index': target_index
     }
     
-    dump(best_stacked_model, os.path.join(xgb_output_dir, f"{target}_ind_{target_index}_best_stacked_model.joblib"))
+    with open(os.path.join(xgb_output_dir, f"{target}_ind_{target_index}_best_model_params.json"), 'w') as f:
+        json.dump(best_model_params, f, indent=4)
     
     # Final overall summary
     final_summary = {
@@ -1332,7 +1289,8 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
 def optimize_stacked_model(target, start_round=0, end_round=None, step=1,
                          ebm_parameter_sets=None, xgb_parameter_sets=None,
                          organized_dir="./src/data/csv", target_index=0,
-                         parallel=True, max_workers=None, sample=None):
+                         parallel=True, max_workers=None, sample=None, 
+                         only_optimize_xgb=False, optimal_ebm_param_name=None):
     """
     Optimize a stacked EBM+XGBoost model for a target.
     First finds the best EBM model, then the best XGBoost model for the residuals.
@@ -1349,6 +1307,8 @@ def optimize_stacked_model(target, start_round=0, end_round=None, step=1,
         parallel: Whether to use parallel processing
         max_workers: Maximum number of parallel workers (None = auto)
         sample: If specified, sample this many rounds evenly instead of using all rounds
+        only_optimize_xgb: If True, skip EBM optimization and use provided optimal_ebm_param_name
+        optimal_ebm_param_name: Name of the optimal EBM parameter set to use if only_optimize_xgb is True
         
     Returns:
         Dictionary with the optimized model configuration and evaluation results
@@ -1364,29 +1324,40 @@ def optimize_stacked_model(target, start_round=0, end_round=None, step=1,
     print(f"Rounds: {start_round} to {end_round if end_round is not None else 'all'}{sampling_info}")
     print(f"{'='*80}")
     
-    ebm_results = evaluate_ebm_parameter_sets(
-        target=target,
-        start_round=start_round,
-        end_round=end_round,
-        step=step,
-        ebm_parameter_sets=ebm_parameter_sets,
-        output_dir=output_dir,
-        organized_dir=organized_dir,
-        target_index=target_index,
-        parallel=parallel,
-        max_workers=max_workers,
-        sample=sample
-    )
+    if not only_optimize_xgb:
+        ebm_results = evaluate_ebm_parameter_sets(
+            target=target,
+            start_round=start_round,
+            end_round=end_round,
+            step=step,
+            ebm_parameter_sets=ebm_parameter_sets,
+            output_dir=output_dir,
+            organized_dir=organized_dir,
+            target_index=target_index,
+            parallel=parallel,
+            max_workers=max_workers,
+            sample=sample
+        )
+        best_ebm_name = ebm_results['best_parameter_set']
+        best_ebm_params = ebm_results['best_params']
+    else:
+        # Use the provided optimal EBM parameters directly
+        if optimal_ebm_param_name is None or optimal_ebm_param_name not in ebm_parameter_sets:
+            raise ValueError(f"Invalid optimal_ebm_param_name: {optimal_ebm_param_name}. Available options: {list(ebm_parameter_sets.keys())}")
+            
+        best_ebm_name = optimal_ebm_param_name
+        best_ebm_params = ebm_parameter_sets[best_ebm_name]
+        print(f"Using specified optimal EBM parameter set: {best_ebm_name}")
     
     # Step 2: Find the best XGBoost model for the residuals
     print(f"\n{'='*80}")
     print(f"Step 2: Finding the best XGBoost model for the residuals")
-    print(f"Using best EBM model: {ebm_results['best_parameter_set']}")
+    print(f"Using best EBM model parameters: {best_ebm_name}")
     print(f"{'='*80}")
     
     stacked_results = evaluate_stacked_model(
         target=target,
-        best_ebm_params=ebm_results['best_params'],
+        best_ebm_params=best_ebm_params,
         start_round=start_round,
         end_round=end_round,
         step=step,
@@ -1403,8 +1374,8 @@ def optimize_stacked_model(target, start_round=0, end_round=None, step=1,
     optimization_results = {
         'target': target,
         'target_index': target_index,
-        'best_ebm_parameter_set': ebm_results['best_parameter_set'],
-        'best_ebm_params': ebm_results['best_params'],
+        'best_ebm_parameter_set': best_ebm_name,
+        'best_ebm_params': best_ebm_params,
         'best_xgb_params': stacked_results['best_xgb_params'],
         'ebm_only_r2': stacked_results['ebm_only_r2'],
         'stacked_r2': stacked_results['stacked_r2'],
@@ -1421,7 +1392,7 @@ def optimize_stacked_model(target, start_round=0, end_round=None, step=1,
     
     print(f"\n{'='*80}")
     print(f"Optimization complete for target: {target}, index: {target_index}")
-    print(f"Best EBM model: {ebm_results['best_parameter_set']}")
+    print(f"Best EBM model: {best_ebm_name}")
     print(f"EBM Only R²: {stacked_results['ebm_only_r2']:.4f}")
     print(f"Stacked Model R²: {stacked_results['stacked_r2']:.4f}")
     print(f"R² Improvement: {stacked_results['r2_improvement']:.2f}%")
@@ -1850,6 +1821,9 @@ def main():
     parser.add_argument('--sample', type=int, default=None,
                         help='Sample this many rounds evenly (default: use all rounds)')
     
+    parser.add_argument('--optimal_ebm_params', type=str, default=None,
+                        help='Name of optimal EBM parameter set to use instead of optimizing')
+    
     args = parser.parse_args()
     
     # Get available targets
@@ -1957,20 +1931,43 @@ def main():
             
             for target_index in target_indices:
                 if args.optimize:
-                    # Run sequential optimization
-                    optimize_stacked_model(
-                        target=target,
-                        start_round=args.start,
-                        end_round=args.end,
-                        step=args.step,
-                        ebm_parameter_sets=ebm_parameter_sets,
-                        xgb_parameter_sets=xgb_residual_sets,
-                        organized_dir=args.organized_dir,
-                        target_index=target_index,
-                        parallel=not args.no_parallel,
-                        max_workers=args.max_workers,
-                        sample=args.sample
-                    )
+                    if args.optimal_ebm_params is not None:
+                        # Use optimal EBM parameters
+                        if args.optimal_ebm_params not in ebm_parameter_sets:
+                            print(f"Error: EBM parameter set '{args.optimal_ebm_params}' not found")
+                            continue
+                        
+                        print(f"Using optimal EBM parameter set: {args.optimal_ebm_params}")
+                
+                        optimize_stacked_model(
+                            target=target,
+                            start_round=args.start,
+                            end_round=args.end,
+                            step=args.step,
+                            ebm_parameter_sets=ebm_parameter_sets,
+                            xgb_parameter_sets=xgb_residual_sets,
+                            organized_dir=args.organized_dir,
+                            target_index=target_index,
+                            parallel=not args.no_parallel,
+                            max_workers=args.max_workers,
+                            sample=args.sample,
+                            only_optimize_xgb=True,
+                            optimal_ebm_param_name=args.optimal_ebm_params
+                        )
+                    else:
+                        optimize_stacked_model(
+                            target=target,
+                            start_round=args.start,
+                            end_round=args.end,
+                            step=args.step,
+                            ebm_parameter_sets=ebm_parameter_sets,
+                            xgb_parameter_sets=xgb_residual_sets,
+                            organized_dir=args.organized_dir,
+                            target_index=target_index,
+                            parallel=not args.no_parallel,
+                            max_workers=args.max_workers,
+                            sample=args.sample
+                        )
                 elif args.run_best:
                     # Run with best previously found parameters
                     if args.best_params_file is None:
