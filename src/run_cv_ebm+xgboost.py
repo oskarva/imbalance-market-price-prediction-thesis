@@ -1842,25 +1842,28 @@ def main():
     
     # Define EBM parameter sets
     ebm_parameter_sets = {
-            'ebm_base': {
-                'interactions': 0,  # No interaction terms - purely additive
+            #In theory, EBM should perform reasonably well out of the box
+            'ebm_default': {
+                'interactions': 0,
                 'outer_bags': 8,
                 'inner_bags': 0,
                 'learning_rate': 0.01,
                 'validation_size': 0.15,
-                'min_samples_leaf': 5,
+                'min_samples_leaf': 2,
                 'max_leaves': 256,
                 'random_state': 42
             },
-            'ebm_light_interactions': {
-                'interactions': 3,  # Limited interactions for reasonable speed
-                'outer_bags': 8,
+            'ebm_fast': {
+                'max_bins': 64,
+                'max_interaction_bins': 16,
+                'interactions': 0,
+                'learning_rate': 0.05,
+                'min_samples_leaf': 10,
+                'random_state': 42,
+                'outer_bags': 4,
                 'inner_bags': 0,
-                'learning_rate': 0.01,
-                'validation_size': 0.15,
-                'min_samples_leaf': 5,
-                'max_leaves': 256,
-                'random_state': 42
+                'max_rounds': 1000,
+                'early_stopping_rounds': 50
             },
             'ebm_robust': {
                 'interactions': 0,  # Removed interactions for speed
@@ -1876,14 +1879,16 @@ def main():
     
     # Define XGBoost parameter sets for residual modeling
     xgb_residual_sets = {
-        'xgb_residual_light': {
+        'xgb_residual_mse': {  # Renamed for clarity
             'objective': 'reg:squarederror',
             'learning_rate': 0.03,
-            'n_estimators': 300,  # Fewer estimators for residuals
-            'max_depth': 3,  # Shallower trees
+            'n_estimators': 300,
+            'max_depth': 3,
             'subsample': 0.8,
             'colsample_bytree': 0.8,
             'min_child_weight': 3,
+            'reg_lambda': 1,  # Added regularization
+            'early_stopping_rounds': 50,  # Added early stopping
             'random_state': 42
         },
         'xgb_residual_huber': {
@@ -1894,17 +1899,21 @@ def main():
             'subsample': 0.7,
             'colsample_bytree': 0.7,
             'gamma': 0.1,
+            'min_child_weight': 2,  # Added for consistency
+            'reg_lambda': 1,  # Added regularization
+            'early_stopping_rounds': 50,  # Added early stopping
             'random_state': 42
         },
-        'xgb_residual_quantile': {
-            'objective': 'reg:quantileerror',
-            'quantile_alpha': 0.5,
-            'learning_rate': 0.015,
+        'xgb_residual_robust': {  # Changed from quantile to robust
+            'objective': 'reg:squarederror',
+            'learning_rate': 0.01,  # Slower learning rate
             'n_estimators': 500,
-            'max_depth': 4,
-            'subsample': 0.75,
-            'colsample_bytree': 0.75,
-            'colsample_bylevel': 0.75,
+            'max_depth': 2,  # Very shallow trees for robustness
+            'subsample': 0.6,  # More aggressive subsampling
+            'colsample_bytree': 0.6,
+            'min_child_weight': 5,  # More conservative
+            'reg_lambda': 3,  # Stronger regularization
+            'early_stopping_rounds': 50,
             'random_state': 42
         }
     }
