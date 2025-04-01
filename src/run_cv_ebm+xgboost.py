@@ -1946,7 +1946,6 @@ def main():
             'colsample_bytree': 0.8,
             'min_child_weight': 3,
             'reg_lambda': 1,  # Added regularization
-            'early_stopping_rounds': 50,  # Added early stopping
             'random_state': 42
         },
         'xgb_residual_huber': {
@@ -1959,7 +1958,6 @@ def main():
             'gamma': 0.1,
             'min_child_weight': 2,  # Added for consistency
             'reg_lambda': 1,  # Added regularization
-            'early_stopping_rounds': 50,  # Added early stopping
             'random_state': 42
         },
         'xgb_residual_robust': {  # Changed from quantile to robust
@@ -1971,7 +1969,6 @@ def main():
             'colsample_bytree': 0.6,
             'min_child_weight': 5,  # More conservative
             'reg_lambda': 3,  # Stronger regularization
-            'early_stopping_rounds': 50,
             'random_state': 42
         }
     }
