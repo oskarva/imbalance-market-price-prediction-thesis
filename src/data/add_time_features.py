@@ -21,41 +21,16 @@ def add_time_features(df):
     """
     # Create a copy of the dataframe to avoid modifying the original
     df_with_features = df.copy()
-    
-    # Basic time components
-    df_with_features['hour'] = df_with_features.index.hour
-    df_with_features['dayofweek'] = df_with_features.index.dayofweek  # 0=Monday, 6=Sunday
-    df_with_features['month'] = df_with_features.index.month
-    df_with_features['dayofyear'] = df_with_features.index.dayofyear
-    df_with_features['weekofyear'] = df_with_features.index.isocalendar().week
-    
+        
     # Time of day features (cyclic encoding to handle midnight/noon transitions)
     hours_in_day = 24
     df_with_features['sin_hour'] = np.sin(2 * np.pi * df_with_features.index.hour / hours_in_day)
     df_with_features['cos_hour'] = np.cos(2 * np.pi * df_with_features.index.hour / hours_in_day)
-    
-    # Day of week features (cyclic encoding to handle week transitions)
-    days_in_week = 7
-    df_with_features['sin_dayofweek'] = np.sin(2 * np.pi * df_with_features.index.dayofweek / days_in_week)
-    df_with_features['cos_dayofweek'] = np.cos(2 * np.pi * df_with_features.index.dayofweek / days_in_week)
-    
+
     # Month features (cyclic encoding to handle year transitions)
     months_in_year = 12
     df_with_features['sin_month'] = np.sin(2 * np.pi * df_with_features.index.month / months_in_year)
     df_with_features['cos_month'] = np.cos(2 * np.pi * df_with_features.index.month / months_in_year)
-    
-    # Is weekend feature
-    df_with_features['is_weekend'] = (df_with_features.index.dayofweek >= 5).astype(int)
-    
-    # Is business hour feature (9 AM to 5 PM)
-    df_with_features['is_business_hour'] = ((df_with_features.index.hour >= 9) & 
-                                           (df_with_features.index.hour < 17)).astype(int)
-    
-    # 15-minute interval within hour (0, 15, 30, 45)
-    df_with_features['minute_interval'] = df_with_features.index.minute
-    
-    # Quarter of the day (1-4)
-    df_with_features['quarter_of_day'] = (df_with_features.index.hour // 6) + 1
     
     return df_with_features
 

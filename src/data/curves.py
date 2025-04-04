@@ -8,22 +8,22 @@ curve_collections = {
             "no5",
             ],
         "X": [
-            "vol {area} regulation up mwh cet h a",
-            "vol {area} regulation down mwh cet h a",
-            "con {area} intraday mwh/h cet h a",
-            "con {area} heating % cet min15 s",
-            "con {area} cooling % cet min15 s",
-            "pro {area} tot mwh/h cet min15 a",
-            "pri {area} spot €/mwh cet h a",
-            "rdl {area} mwh/h cet min15 a",
+            #"vol {area} regulation up mwh cet h a",
+            #"vol {area} regulation down mwh cet h a",
+            "con {area} intraday mwh/h cet h a", # consumption 
+            "con {area} heating % cet min15 s", # need for heat
+            "con {area} cooling % cet min15 s", # need for cooling
+            "pro {area} tot mwh/h cet min15 a", # total production
+            "pri {area} spot €/mwh cet h a", # spotprice
+            "rdl {area} mwh/h cet min15 a", 
         ],
         "y": [
             "pri {area} regulation up €/mwh cet h a",
             "pri {area} regulation down €/mwh cet h a",
         ],
         "X_to_forecast": {
-            "vol {area} regulation up mwh cet h a"   : "vol {area} regulation up mwh cet h a",
-            "vol {area} regulation down mwh cet h a" : "vol {area} regulation down mwh cet h a",
+            #"vol {area} regulation up mwh cet h a"   : "vol {area} regulation up mwh cet h a",
+            #"vol {area} regulation down mwh cet h a" : "vol {area} regulation down mwh cet h a",
             "con {area} intraday mwh/h cet h a"      : "con {area} intraday mwh/h cet min15 f",
             "con {area} heating % cet min15 s"       : "con {area} heating % cet min15 s",
             "con {area} cooling % cet min15 s"       : "con {area} cooling % cet min15 s",
