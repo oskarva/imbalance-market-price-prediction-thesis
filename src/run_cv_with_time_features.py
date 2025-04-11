@@ -1,9 +1,3 @@
-"""
-Enhanced script to run cross-validation with overall R² calculation across all predictions.
-Updated with a simplified parameter testing approach instead of complex optimization.
-Includes adding time-based features (hour, month) to the data dynamically.
-Added support for selecting between validation and test phases.
-"""
 import os
 import argparse
 import time

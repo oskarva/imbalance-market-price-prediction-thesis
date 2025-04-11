@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-"""
-plot_predictions.py - Visualize actual vs predicted values from a single CSV file
-
-This script processes a single predictions CSV file, extracts actual and predicted values,
-and creates visualizations to analyze model performance.
-"""
-
 import os
 import pandas as pd
 import matplotlib.pyplot as plt

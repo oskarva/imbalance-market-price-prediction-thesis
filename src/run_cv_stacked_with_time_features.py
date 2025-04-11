@@ -1,16 +1,3 @@
-#!/usr/bin/env python3
-"""
-ebm_xgboost_optimize.py - Sequential optimization for stacked EBM+XGBoost models
-
-This script:
-1. First tests different EBM configurations and selects the best one
-2. Then tests different XGBoost configurations on the residuals of the best EBM
-3. Returns the best overall stacked model
-4. Includes dynamic addition of time-based features (hour, month) to the data.
-
-The approach is designed to be efficient while finding near-optimal configurations.
-"""
-
 import os
 import argparse
 import time

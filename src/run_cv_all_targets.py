@@ -1,7 +1,3 @@
-"""
-Enhanced script to run cross-validation with overall R² calculation across all predictions.
-Updated with a simplified parameter testing approach instead of complex optimization.
-"""
 import os
 import argparse
 import time

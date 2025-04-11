@@ -1,12 +1,3 @@
-#!/usr/bin/env python3
-"""
-calculate_overall_r2.py - Calculate overall R² and other metrics across all CV predictions
-
-This script loads prediction files from cross-validation rounds, combines them,
-and calculates overall metrics including R², MAE, RMSE, and correlation.
-It also generates visualizations of the results.
-"""
-
 import argparse
 import glob
 import os

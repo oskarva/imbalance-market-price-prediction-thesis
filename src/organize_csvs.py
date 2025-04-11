@@ -1,6 +1,3 @@
-"""
-Simple script to create y files from extracted target data with proper numeric sorting.
-"""
 import os
 import pandas as pd
 import argparse

@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-"""
-naive_cv_all_targets.py - Apply a naive forecasting model to multiple target areas
-
-This script applies a naive model to datasets across different areas. The model
-uses the actual value at time t as the prediction for times t+1 to t+step_size,
-then uses the value at t+step_size for predictions from t+step_size+1 to t+2*step_size,
-and so on.
-"""
-
 import os
 import argparse
 import time

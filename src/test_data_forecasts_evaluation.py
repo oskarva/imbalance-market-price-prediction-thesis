@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-"""
-compare_forecasts.py - Compare forecasted values in X_test files with actual values in X_train
-
-This script compares forecasted values from X_test_n.csv files with actual values from
-X_train_572.csv and calculates R2 metric for each column across the entire period.
-"""
-
 import os
 import glob
 import pandas as pd
