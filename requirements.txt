@@ -1,7 +1,8 @@
 volue_insight_timeseries==1.2.1
-pandas
-matplotlib
-numpy
-scikit-learn
-xgboost
-optuna
+pandas==2.2.3
+matplotlib==3.9.4
+numpy==2.0.2
+scikit-learn==1.6.1
+xgboost==2.1.4
+interpret==0.6.9
+joblib==1.4.2
