@@ -18,8 +18,8 @@ curve_collections = {
             "rdl {area} mwh/h cet min15 a", 
         ],
         "y": [
-            "pri {area} regulation up €/mwh cet h a",
-            "pri {area} regulation down €/mwh cet h a",
+            "pri {area} regulation up €/mwh cet min15 a",
+            "pri {area} regulation down €/mwh cet min15 a",
         ],
         "X_to_forecast": {
             #"vol {area} regulation up mwh cet h a"   : "vol {area} regulation up mwh cet h a",

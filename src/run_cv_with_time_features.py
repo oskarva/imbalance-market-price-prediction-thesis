@@ -2,6 +2,7 @@
 Enhanced script to run cross-validation with overall R² calculation across all predictions.
 Updated with a simplified parameter testing approach instead of complex optimization.
 Includes adding time-based features (hour, month) to the data dynamically.
+Added support for selecting between validation and test phases.
 """
 import os
 import argparse
@@ -15,7 +16,6 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
 from functools import partial
 
-# --- Added Time Feature Function ---
 def add_time_features(df):
     """
     Add time-based features to the dataframe.
@@ -50,29 +50,33 @@ def add_time_features(df):
     df_with_features['cos_month'] = np.cos(2 * np.pi * df_with_features.index.month / months_in_year)
 
     return df_with_features
-# --- End of Added Time Feature Function ---
 
-def get_available_targets(organized_dir="./src/data/csv", areas=["no1", "no2", "no3", "no4", "no5"]):
+
+def get_available_targets(organized_dir="./src/data/csv", areas=["no1", "no2", "no3", "no4", "no5"], phase="validation"):
     """
     Get list of available targets from the organized directory structure.
 
     Args:
         organized_dir: Base directory for organized files
         areas: List of area directories to check
+        phase: Either "validation" or "test" to specify which phase's data to check
 
     Returns:
         List of available targets (directory names)
     """
     targets = []
 
-    # Look for subdirectories that contain y_train and y_test files
+    # Look for subdirectories that contain validation_rounds or test_rounds folders
     for item in os.listdir(organized_dir):
         if item in areas:
-            targets.append(item)
+            # Check if this area has the specified phase's folder
+            phase_dir = os.path.join(organized_dir, item, f"{phase}_rounds")
+            if os.path.isdir(phase_dir) and any(f.startswith('y_test_') for f in os.listdir(phase_dir)):
+                targets.append(item)
 
     return targets
 
-def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0):
+def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0, phase="validation"):
     """
     Load a specific cross-validation round's data for a target,
     adding time features to X data.
@@ -82,6 +86,7 @@ def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0):
         target_dir: Directory containing target-specific files
         x_files_dir: Directory containing X files
         target_index: Index (0-based) for which target column to return if multiple targets exist
+        phase: Either "validation" or "test" to specify which phase's data to load
 
     Returns:
         Tuple containing (X_train, y_train, X_test, y_test) as pandas DataFrames or Series.
@@ -89,13 +94,24 @@ def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0):
         y_train and y_test will be the selected target column.
     """
     try:
-        # Load X data
-        X_train = pd.read_csv(f"{x_files_dir}/X_train_{cv_round}.csv", index_col=0)
-        X_test = pd.read_csv(f"{x_files_dir}/X_test_{cv_round}.csv", index_col=0)
+        # Construct paths with phase folder
+        phase_folder = f"{phase}_rounds"
+        phase_dir = os.path.join(target_dir, phase_folder)
+        x_phase_dir = os.path.join(x_files_dir, phase_folder)
+        
+        # Verify directories exist
+        if not os.path.isdir(phase_dir):
+            raise FileNotFoundError(f"Phase directory not found: {phase_dir}")
+        if not os.path.isdir(x_phase_dir):
+            raise FileNotFoundError(f"X phase directory not found: {x_phase_dir}")
+            
+        # Load X data from phase directory
+        X_train = pd.read_csv(f"{x_phase_dir}/X_train_{cv_round}.csv", index_col=0)
+        X_test = pd.read_csv(f"{x_phase_dir}/X_test_{cv_round}.csv", index_col=0)
 
-        # Load y data from target-specific directory
-        y_train = pd.read_csv(f"{target_dir}/y_train_{cv_round}.csv", index_col=0)
-        y_test = pd.read_csv(f"{target_dir}/y_test_{cv_round}.csv", index_col=0)
+        # Load y data from phase directory
+        y_train = pd.read_csv(f"{phase_dir}/y_train_{cv_round}.csv", index_col=0)
+        y_test = pd.read_csv(f"{phase_dir}/y_test_{cv_round}.csv", index_col=0)
 
         # Convert indices to datetime with utc=True to avoid warnings
         X_train.index = pd.to_datetime(X_train.index, utc=True)
@@ -123,20 +139,29 @@ def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0):
 
         return X_train, y_train, X_test, y_test
     except Exception as e:
-        print(f"Error loading CV round {cv_round}: {e}")
+        print(f"Error loading CV round {cv_round} for phase {phase}: {e}")
         raise
 
-def get_cv_round_count(target_dir):
+def get_cv_round_count(target_dir, phase="validation"):
     """
     Get the total number of cross-validation rounds available for a target.
 
     Args:
         target_dir: Directory containing target-specific files
+        phase: Either "validation" or "test" to specify which phase's data to count
 
     Returns:
         int: The number of cross-validation rounds
     """
-    y_test_files = [f for f in os.listdir(target_dir) if f.startswith('y_test_')]
+    # Construct path with phase folder
+    phase_folder = f"{phase}_rounds"
+    phase_dir = os.path.join(target_dir, phase_folder)
+    
+    # Verify directory exists
+    if not os.path.isdir(phase_dir):
+        raise FileNotFoundError(f"Phase directory not found: {phase_dir}")
+    
+    y_test_files = [f for f in os.listdir(phase_dir) if f.startswith('y_test_')]
 
     # Extract round numbers from filenames
     round_numbers = []
@@ -148,7 +173,7 @@ def get_cv_round_count(target_dir):
             continue
 
     if not round_numbers:
-        raise FileNotFoundError(f"No cross-validation files found in {target_dir}")
+        raise FileNotFoundError(f"No cross-validation files found in {phase_dir}")
 
     return max(round_numbers) + 1  # +1 because we count from 0
 
@@ -260,7 +285,7 @@ def train_and_evaluate(X_train, y_train, X_test, y_test, params):
 
 def run_cv_for_target(target, start_round=0, end_round=None, step=1,
                      model_params=None, output_dir=None,
-                     organized_dir="./src/data/csv", target_index=0):
+                     organized_dir="./src/data/csv", target_index=0, phase="validation"):
     """
     Run cross-validation for a specific target with overall R² calculation.
 
@@ -273,6 +298,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
         output_dir: Directory to save results
         organized_dir: Base directory for organized files
         target_index: Index of target variable (0 or 1) for regulation up/down
+        phase: Either "validation" or "test" to specify which phase's data to use
 
     Returns:
         Dictionary with results summary
@@ -302,7 +328,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
     timestamp = time.strftime("%Y%m%d-%H%M%S")
 
     # Get total number of rounds
-    total_rounds = get_cv_round_count(target_dir)
+    total_rounds = get_cv_round_count(target_dir, phase=phase)
 
     # Set default end_round if not provided
     if end_round is None:
@@ -313,7 +339,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
     # Create a unique directory for the run
     if output_dir is None:
         # Use the new directory structure
-        base_dir = f"./results/xgboost_timefeat/{timestamp}" # Changed base dir name
+        base_dir = f"./results/xgboost_timefeat/{timestamp}_{phase}" # Changed base dir name to include phase
         os.makedirs(base_dir, exist_ok=True)
         index_output_dir = f"{base_dir}/{target}_ind_{target_index}"
     else:
@@ -332,13 +358,15 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
         'model_params': model_params,
         'timestamp': timestamp,
         'target_index': target_index,
-        'time_features_added': True # Indicate time features were used
+        'time_features_added': True, # Indicate time features were used
+        'phase': phase  # Save which phase we're using
     }
 
     with open(os.path.join(index_output_dir, 'config.json'), 'w') as f:
         json.dump(config, f, indent=4)
 
     print(f"\nRunning cross-validation for target: {target}, index: {target_index} (with time features)")
+    print(f"Phase: {phase}")
     print(f"Rounds: {start_round} to {end_round-1} with step {step}")
     print(f"Total rounds available: {total_rounds}")
     print(f"Model parameters: {model_params}")
@@ -366,7 +394,8 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
                 cv_round=round_num,
                 target_dir=target_dir,
                 x_files_dir=x_files_dir,
-                target_index=target_index
+                target_index=target_index,
+                phase=phase  # Pass the phase parameter
             )
 
             # Train and evaluate model
@@ -417,7 +446,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
             pred_df_sorted = pred_df.sort_values('timestamp')
             plt.plot(pred_df_sorted['timestamp'], pred_df_sorted['actual'], 'b-', label='Actual', alpha=0.7)
             plt.plot(pred_df_sorted['timestamp'], pred_df_sorted['predicted'], 'r--', label='Predicted', alpha=0.7)
-            plt.title(f'Round {round_num} - Actual vs Predicted')
+            plt.title(f'Round {round_num} ({phase}) - Actual vs Predicted')
             plt.ylabel('Value') # Changed from Price for generality
             plt.legend()
             plt.xticks(rotation=45)
@@ -432,9 +461,9 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
             # Calculate round-specific R² for the plot title only
             if np.var(pred_df['actual']) > 1e-9: # Avoid division by zero or near-zero
                 r2 = r2_score(pred_df['actual'], pred_df['predicted'])
-                plt.title(f'Round {round_num} Correlation (R² = {r2:.4f})')
+                plt.title(f'Round {round_num} ({phase}) Correlation (R² = {r2:.4f})')
             else:
-                plt.title(f'Round {round_num} Correlation (R² undefined)')
+                plt.title(f'Round {round_num} ({phase}) Correlation (R² undefined)')
 
             # Add perfect prediction line only if data exists
             if not pred_df.empty:
@@ -465,14 +494,15 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
 
     # Check if we have any successful rounds
     if not all_metrics['mae']:
-        print(f"No successful rounds for target {target}, index {target_index}. All {failed_rounds} rounds failed or were skipped.")
+        print(f"No successful rounds for target {target}, index {target_index}, phase {phase}. All {failed_rounds} rounds failed or were skipped.")
 
         # Save a minimal summary
         summary = {
             'processed_rounds': failed_rounds + successful_rounds,
             'successful_rounds': successful_rounds,
             'failed_rounds': failed_rounds,
-            'error': "All rounds failed or were skipped"
+            'error': "All rounds failed or were skipped",
+            'phase': phase
         }
 
         with open(os.path.join(index_output_dir, 'summary.json'), 'w') as f:
@@ -509,9 +539,9 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
         plt.ylabel('Predicted Values')
 
         if not np.isnan(overall_r2):
-            plt.title(f'Overall Correlation (R² = {overall_r2:.4f})')
+            plt.title(f'Overall Correlation - {phase.capitalize()} Phase (R² = {overall_r2:.4f})')
         else:
-            plt.title('Overall Correlation (R² undefined or unreliable)')
+            plt.title(f'Overall Correlation - {phase.capitalize()} Phase (R² undefined or unreliable)')
 
         # Add perfect prediction line only if data exists and is valid
         if len(overall_actual) > 0 and pd.notna(overall_actual.min()) and pd.notna(overall_predicted.min()):
@@ -523,7 +553,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
 
         # Add summary statistics to plot
         stats_text = (
-            f"Overall Statistics:\n"
+            f"Overall Statistics ({phase.capitalize()}):\n"
             f"MAE: {overall_mae:.4f}\n"
             f"RMSE: {overall_rmse:.4f}\n"
             f"R²: {overall_r2:.4f}\n"
@@ -549,11 +579,13 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
         'overall_rmse': overall_rmse,
         'processed_rounds': failed_rounds + successful_rounds,
         'successful_rounds': successful_rounds,
-        'failed_rounds': failed_rounds
+        'failed_rounds': failed_rounds,
+        'phase': phase
     }
 
     # Print summary
     print("\nCross-validation summary:")
+    print(f"Phase: {phase}")
     print(f"Processed {summary['processed_rounds']} rounds ({summary['successful_rounds']} successful, {summary['failed_rounds']} failed/skipped)")
     print(f"Avg MAE: {summary['avg_mae']:.4f} ± {summary['std_mae']:.4f}")
     print(f"Avg RMSE: {summary['avg_rmse']:.4f} ± {summary['std_rmse']:.4f}")
@@ -575,7 +607,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
              plt.axhline(y=overall_mae, color='r', linestyle='-', label=f'Overall MAE: {overall_mae:.4f}')
         plt.xlabel('Round Number')
         plt.ylabel('MAE')
-        plt.title('MAE Values Across Rounds')
+        plt.title(f'MAE Values Across Rounds - {phase.capitalize()} Phase')
         plt.xticks(rotation=45, ha='right')
         plt.grid(True, axis='y')
         plt.legend()
@@ -587,7 +619,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
              plt.axhline(y=overall_rmse, color='r', linestyle='-', label=f'Overall RMSE: {overall_rmse:.4f}')
         plt.xlabel('Round Number')
         plt.ylabel('RMSE')
-        plt.title('RMSE Values Across Rounds')
+        plt.title(f'RMSE Values Across Rounds - {phase.capitalize()} Phase')
         plt.xticks(rotation=45, ha='right')
         plt.grid(True, axis='y')
         plt.legend()
@@ -622,9 +654,8 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
     }
 
 
-# --- Parameter Optimization Function (No changes needed here, uses run_cv_for_target) ---
 def try_parameter_sets_for_target(target, start_round=0, end_round=None, step=1,
-                               organized_dir="./src/data/csv", target_index=0):
+                               organized_dir="./src/data/csv", target_index=0, phase="validation"):
     """
     Try different parameter sets for a specific target, running full cross-validation for each.
     This will use the modified run_cv_for_target which adds time features.
@@ -636,6 +667,7 @@ def try_parameter_sets_for_target(target, start_round=0, end_round=None, step=1,
         step: Step size for processing rounds
         organized_dir: Base directory for organized files
         target_index: Index of target variable (0 or 1) for regulation up/down
+        phase: Either "validation" or "test" to specify which phase's data to use
 
     Returns:
         Dictionary with results summary for each parameter set
@@ -706,7 +738,7 @@ def try_parameter_sets_for_target(target, start_round=0, end_round=None, step=1,
     timestamp = time.strftime("%Y%m%d-%H%M%S")
 
     # Set up base output directory
-    base_output_dir = f"./results/xgboost_timefeat_optimize/{timestamp}" # Changed base dir name
+    base_output_dir = f"./results/xgboost_timefeat_optimize/{timestamp}_{phase}" # Changed base dir name to include phase
     os.makedirs(base_output_dir, exist_ok=True)
 
     # Store results for each parameter set
@@ -715,7 +747,7 @@ def try_parameter_sets_for_target(target, start_round=0, end_round=None, step=1,
     # Try each parameter set
     for param_name, params in parameter_sets.items():
         print(f"\n{'='*50}")
-        print(f"Trying parameter set: {param_name} for target: {target}, index: {target_index} (with time features)")
+        print(f"Trying parameter set: {param_name} for target: {target}, index: {target_index}, phase: {phase} (with time features)")
         print(f"Parameters: {params}")
         print(f"{'='*50}")
 
@@ -730,7 +762,8 @@ def try_parameter_sets_for_target(target, start_round=0, end_round=None, step=1,
             model_params=params,
             output_dir=output_dir,
             organized_dir=organized_dir,
-            target_index=target_index
+            target_index=target_index,
+            phase=phase  # Pass the phase parameter
         )
 
         # Store the result
@@ -743,6 +776,7 @@ def try_parameter_sets_for_target(target, start_round=0, end_round=None, step=1,
     comparison = {
         'target': target,
         'target_index': target_index,
+        'phase': phase,
         'timestamp': timestamp,
         'parameter_sets': list(parameter_sets.keys()),
         'metrics': {},
@@ -806,7 +840,6 @@ def try_parameter_sets_for_target(target, start_round=0, end_round=None, step=1,
 
     return optimization_results
 
-# --- Main Function (No changes needed here, uses modified functions) ---
 def main():
     parser = argparse.ArgumentParser(description='Run cross-validation with overall R² calculation and optional time features')
 
@@ -860,18 +893,22 @@ def main():
 
     parser.add_argument('--gamma', type=float, default=0,
                         help='Gamma for XGBoost (default: 0)')
+                        
+    # Add new phase parameter
+    parser.add_argument('--phase', type=str, default='validation', choices=['validation', 'test'],
+                        help='Phase to use for cross-validation (validation or test) (default: validation)')
 
     args = parser.parse_args()
 
-    # Get available targets
-    available_targets = get_available_targets(args.organized_dir)
+    # Get available targets for the specified phase
+    available_targets = get_available_targets(args.organized_dir, phase=args.phase)
 
     if args.list or not available_targets:
-        print("\nAvailable targets:")
+        print(f"\nAvailable targets for phase '{args.phase}':")
         for target in available_targets:
             target_dir = os.path.join(args.organized_dir, target)
             try:
-                num_rounds = get_cv_round_count(target_dir)
+                num_rounds = get_cv_round_count(target_dir, phase=args.phase)
                 print(f"  {target} ({num_rounds} rounds)")
             except Exception as e:
                 print(f"  {target} (Error: {str(e)})")
@@ -897,12 +934,12 @@ def main():
     # Process each target
     for target in target_list:
         if target not in available_targets:
-            print(f"Target '{target}' not found in available targets.")
+            print(f"Target '{target}' not found in available targets for phase '{args.phase}'.")
             continue
 
         try:
             print(f"\n{'='*50}")
-            print(f"Processing target: {target}")
+            print(f"Processing target: {target} (Phase: {args.phase})")
             print(f"{'='*50}")
 
             # Determine target indices to process
@@ -920,7 +957,8 @@ def main():
                         end_round=args.end,
                         step=args.step,
                         organized_dir=args.organized_dir,
-                        target_index=target_index
+                        target_index=target_index,
+                        phase=args.phase  # Pass the phase parameter
                     )
                 else:
                     # Run cross-validation with specified parameters (will use time features)
@@ -932,7 +970,8 @@ def main():
                         model_params=model_params,
                         output_dir=args.output, # Base dir handled inside run_cv_for_target
                         organized_dir=args.organized_dir,
-                        target_index=target_index
+                        target_index=target_index,
+                        phase=args.phase  # Pass the phase parameter
                     )
         except Exception as e:
             print(f"Critical error processing target {target}: {type(e).__name__} - {str(e)}")
