@@ -682,7 +682,11 @@ def get_forecast(dates, X_train, X_to_forecast, session, max_retries=3, retry_de
     max_lookback_steps = int((max_lookback_hours * 60) / lookback_step_minutes)
 
     # Define the specific curve requiring special handling
-    SPECIAL_CURVE_NAME = "pro no1 hydro tot mwh/h cet h f" 
+    SPECIAL_CURVE_NAMES = ["pro no1 hydro tot mwh/h cet h f", "pro no2 hydro tot mwh/h cet h f", "pro no3 hydro tot mwh/h cet h f", "pro no4 hydro tot mwh/h cet h f", "pro no5 hydro tot mwh/h cet h f", 
+                           "rdl no1 ec00 mwh/h cet min15 f", "rdl no2 ec00 mwh/h cet min15 f", "rdl no3 ec00 mwh/h cet min15 f", "rdl no4 ec00 mwh/h cet min15 f", "rdl no5 ec00 mwh/h cet min15 f",
+                           "con no1 heating ec00 % cet min15 f", "con no2 heating ec00 % cet min15 f", "con no3 heating ec00 % cet min15 f", "con no4 heating ec00 % cet min15 f", "con no5 heating ec00 % cet min15 f",
+                           "con no1 cooling ec00 % cet min15 f", "con no2 cooling ec00 % cet min15 f", "con no3 cooling ec00 % cet min15 f", "con no4 cooling ec00 % cet min15 f", "con no5 cooling ec00 % cet min15 f",
+                           ] 
 
     # Iterate through columns needing forecasts
     for (orig_col, forecast_source_curve) in X_to_forecast.items():
@@ -707,7 +711,7 @@ def get_forecast(dates, X_train, X_to_forecast, session, max_retries=3, retry_de
                 if isinstance(curve, InstanceCurve):
 
                     # --- >>> START SPECIAL MIDNIGHT HANDLING <<< ---
-                    if forecast_source_curve == SPECIAL_CURVE_NAME:
+                    if forecast_source_curve in SPECIAL_CURVE_NAMES:
                         # Calculate the nearest midnight before the forecast start date
                         # Subtract a tiny amount before normalizing to handle cases where forecast_start_date is exactly midnight
                         target_midnight_issue = (forecast_start_date - pd.Timedelta(microseconds=1)).normalize()
