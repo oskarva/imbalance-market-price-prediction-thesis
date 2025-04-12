@@ -13,9 +13,10 @@ curve_collections = {
             "con {area} intraday mwh/h cet h a", # consumption 
             "con {area} heating % cet min15 s", # need for heat
             "con {area} cooling % cet min15 s", # need for cooling
-            "pro {area} tot mwh/h cet min15 a", # total production
             "pri {area} spot €/mwh cet h a", # spotprice
             "rdl {area} mwh/h cet min15 a", 
+            "pro {area} hydro tot mwh/h cet h af", # total hydro production
+            "pro {area} wnd mwh/h cet min15 a" # total wind production
         ],
         "y": [
             "pri {area} regulation up €/mwh cet min15 a",
@@ -27,9 +28,10 @@ curve_collections = {
             "con {area} intraday mwh/h cet h a"      : "con {area} intraday mwh/h cet min15 f",
             "con {area} heating % cet min15 s"       : "con {area} heating % cet min15 s",
             "con {area} cooling % cet min15 s"       : "con {area} cooling % cet min15 s",
-            "pro {area} tot mwh/h cet min15 a"       : "pro {area} tot mwh/h cet min15 s",
             "pri {area} spot €/mwh cet h a"          : "pri {area} spot €/mwh cet h a",
             "rdl {area} mwh/h cet min15 a"           : "rdl {area} mwh/h cet min15 a",
+            "pro {area} hydro tot mwh/h cet h af"    : "pro {area} hydro tot mwh/h cet h f",
+            "pro {area} wnd mwh/h cet min15 a"       : "pro {area} wnd intraday mwh/h cet min15 f",
         }
     },
 
