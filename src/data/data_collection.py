@@ -634,55 +634,66 @@ def create_cross_validation_sets_and_save(X_df, y_df, first_train_len, crossval_
     print(f"\n--- Finished CV Set Generation: {processed_val_count} validation and {processed_test_count} test rounds ---")
     return processed_val_count, processed_test_count
 
-def get_forecast(dates, X_train, X_to_forecast, session, max_retries=3, retry_delay=10, 
+def get_forecast(dates, X_train, X_to_forecast, session, max_retries=3, retry_delay=10,
                  max_lookback_hours=24, lookback_step_minutes=15):
-    """ 
+    """
     Gets forecast using external curves. For instance curves, walks backwards in time
     to find the most recent forecast if the initial attempt fails.
-    
+    SPECIAL HANDLING: For 'pro no1 hydro tot mwh/h cet h f', directly attempts the
+                      nearest previous midnight instance.
+
     Parameters:
     -----------
     dates: DatetimeIndex for the forecast period
-    X_train: Training data (context only)
+    X_train: Training data (context only - might be unused if only forecasts needed)
     X_to_forecast: Dict mapping columns to external curve names
     session: API session
     max_retries: Max retries for each curve fetch
     retry_delay: Seconds to wait between retries
-    max_lookback_hours: Maximum hours to look back for finding valid forecasts
-    lookback_step_minutes: Minutes to step back in each iteration
-    
+    max_lookback_hours: Maximum hours to look back for finding valid forecasts (for standard instance curves)
+    lookback_step_minutes: Minutes to step back in each iteration (for standard instance curves)
+
     Returns:
     --------
     DataFrame with forecasted values for the requested dates
-    
+
     Raises:
     -------
     RuntimeError: If external forecast fetching fails after all retries and lookbacks
+    ValueError: If input parameters are invalid
     """
-    import time
     if not isinstance(dates, pd.DatetimeIndex):
         raise ValueError("Error: 'dates' must be a pandas DatetimeIndex.")
+    if not dates.tz:
+        # Ensure dates have timezone for correct midnight calculation if source data is tz-aware
+        print("Warning: 'dates' input to get_forecast is timezone-naive. Assuming UTC or system local time for midnight calculation if needed.")
+        # toodoo considr localizing dates here: dates = dates.tz_localize('YourExpectedTimezone')
+
     if any(v is None for v in X_to_forecast.values()):
         raise ValueError("Error: X_to_forecast maps columns to external curve names (strings). None values no longer supported.")
-    
+
     print(f"Generating forecast from external curves for dates: {dates.min()} to {dates.max()}")
     forecast_start_date = dates.min()
     forecast_end_date = dates.max()
     forecast_columns = list(X_to_forecast.keys())
     X_forecast = pd.DataFrame(index=dates, columns=forecast_columns)
-    
-    # Calculate total lookback steps based on hours and step size
+
+    # Calculate total lookback steps based on hours and step size (for standard handling)
     max_lookback_steps = int((max_lookback_hours * 60) / lookback_step_minutes)
-    
+
+    # Define the specific curve requiring special handling
+    SPECIAL_CURVE_NAME = "pro no1 hydro tot mwh/h cet h f" 
+
     # Iterate through columns needing forecasts
     for (orig_col, forecast_source_curve) in X_to_forecast.items():
         print(f"Processing forecast for: {orig_col}")
         print(f"  -> Fetching external forecast from curve: {forecast_source_curve}")
         success = False
         last_exception = None
-        
+
         # Retry loop for fetching
         for attempt in range(max_retries):
+            ts = None # Reset timeseries object for each attempt
             try:
                 # Get curve object
                 curve = session.get_curve(name=forecast_source_curve)
@@ -691,119 +702,174 @@ def get_forecast(dates, X_train, X_to_forecast, session, max_retries=3, retry_de
                     last_exception = ValueError(f"Curve {forecast_source_curve} not found.")
                     time.sleep(retry_delay)
                     continue
-                
-                ts = None
-                
-                # Handle instance curves with backward walking to find recent forecasts
-                if isinstance(curve, volue_insight_timeseries.curves.InstanceCurve):
-                    # Initial issue date (15min before forecast start)
-                    initial_issue_date = forecast_start_date - pd.Timedelta(minutes=lookback_step_minutes)
-                    instance_success = False
-                    instance_last_error = None
-                    
-                    # Try walking back in time to find a valid forecast
-                    for lookback_step in range(max_lookback_steps):
-                        issue_date_attempt = initial_issue_date - pd.Timedelta(minutes=lookback_step * lookback_step_minutes)
-                        print(f"  -> Attempting instance issued around: {issue_date_attempt} (lookback step {lookback_step+1}/{max_lookback_steps})")
-                        
+
+                # --- Handle Instance Curves ---
+                if isinstance(curve, InstanceCurve):
+
+                    # --- >>> START SPECIAL MIDNIGHT HANDLING <<< ---
+                    if forecast_source_curve == SPECIAL_CURVE_NAME:
+                        # Calculate the nearest midnight before the forecast start date
+                        # Subtract a tiny amount before normalizing to handle cases where forecast_start_date is exactly midnight
+                        target_midnight_issue = (forecast_start_date - pd.Timedelta(microseconds=1)).normalize()
+                        print(f"  -> SPECIAL HANDLING for {forecast_source_curve}: Targeting nearest previous midnight instance: {target_midnight_issue}")
+
                         try:
-                            ts = curve.get_instance(issue_date=issue_date_attempt, 
-                                                   data_from=forecast_start_date, 
+                            ts = curve.get_instance(issue_date=target_midnight_issue,
+                                                   data_from=forecast_start_date,
                                                    data_to=forecast_end_date)
                             if ts is not None and hasattr(ts, 'to_pandas'):
-                                # Convert to pandas and check if it has valid data
-                                s = ts.to_pandas()
-                                if not s.empty and not s.isnull().all():
-                                    print(f"  -> Successfully found valid instance at {issue_date_attempt}")
-                                    instance_success = True
-                                    break
+                                s_check = ts.to_pandas()
+                                if not s_check.empty and not s_check.isnull().all():
+                                    print(f"  -> Successfully found valid midnight instance at {target_midnight_issue}")
+                                    # ts is now valid and will be processed later
                                 else:
-                                    print(f"  -> Instance at {issue_date_attempt} has no valid data")
-                                    ts = None  # Reset ts to try next lookback
+                                    print(f"  -> Midnight instance at {target_midnight_issue} has no valid data.")
+                                    ts = None # Mark as failed for this attempt
                             else:
-                                print(f"  -> No valid data returned for instance at {issue_date_attempt}")
-                                instance_last_error = ValueError(f"No valid data for instance at {issue_date_attempt}")
-                        except Exception as instance_err:
-                            print(f"  -> Failed instance {issue_date_attempt}: {instance_err}")
-                            instance_last_error = instance_err
-                    
-                    # If all issue date attempts failed, try get_data as a last resort
-                    if not instance_success:
-                        print(f"  -> All {lookback_step+1} lookback attempts failed for instance curve. Trying get_data as fallback.")
-                        try:
-                            ts = curve.get_data(data_from=forecast_start_date, data_to=forecast_end_date)
-                            if ts is None or not hasattr(ts, 'to_pandas'):
-                                raise ValueError("get_data returned None or invalid data")
-                            # Check if get_data returned valid results
-                            s = ts.to_pandas()
-                            if s.empty or s.isnull().all():
-                                raise ValueError("get_data returned empty or all-NaN data")
-                        except Exception as get_data_err:
-                            print(f"  -> Fallback get_data failed too: {get_data_err}")
-                            # If there was an error from instance attempts, use that as the primary error
-                            if instance_last_error:
-                                error_msg = (f"All {lookback_step+1} lookback attempts failed (last error: {instance_last_error}) " 
-                                            f"and get_data failed: {get_data_err}")
-                                raise ValueError(error_msg)
-                            else:
-                                raise get_data_err
-                
-                # Handle regular timeseries curves
+                                print(f"  -> No data returned for midnight instance at {target_midnight_issue}")
+                                ts = None # Mark as failed for this attempt
+
+                            if ts is None:
+                                # Raise specific error if midnight fetch failed, helps distinguish during retry
+                                raise ValueError(f"Required midnight forecast at {target_midnight_issue} not found or invalid.")
+
+                        except Exception as midnight_err:
+                            print(f"  -> Failed special midnight fetch for {forecast_source_curve}: {midnight_err}")
+                            last_exception = midnight_err
+                            ts = None # Ensure ts is None if special fetch failed
+                        # If ts is still None here, the special fetch failed for this attempt.
+                        # The code will proceed to the common error handling below.
+
+                    # --- >>> END SPECIAL MIDNIGHT HANDLING <<< ---
+
+                    # --- Standard Lookback Logic for OTHER Instance Curves ---
+                    else:
+                        initial_issue_date = forecast_start_date - pd.Timedelta(minutes=lookback_step_minutes)
+                        instance_success = False
+                        instance_last_error = None
+
+                        # Try walking back in time to find a valid forecast
+                        for lookback_step in range(max_lookback_steps):
+                            issue_date_attempt = initial_issue_date - pd.Timedelta(minutes=lookback_step * lookback_step_minutes)
+                            print(f"  -> Attempting instance issued around: {issue_date_attempt} (lookback step {lookback_step+1}/{max_lookback_steps})")
+
+                            try:
+                                temp_ts = curve.get_instance(issue_date=issue_date_attempt,
+                                                        data_from=forecast_start_date,
+                                                        data_to=forecast_end_date)
+                                if temp_ts is not None and hasattr(temp_ts, 'to_pandas'):
+                                    s = temp_ts.to_pandas()
+                                    if not s.empty and not s.isnull().all():
+                                        print(f"  -> Successfully found valid instance at {issue_date_attempt}")
+                                        ts = temp_ts # Assign the successful timeseries
+                                        instance_success = True
+                                        break # Found a valid instance, exit lookback loop
+                                    else:
+                                        print(f"  -> Instance at {issue_date_attempt} has no valid data")
+                                        # Continue lookback
+                                else:
+                                    print(f"  -> No valid data returned for instance at {issue_date_attempt}")
+                                    instance_last_error = ValueError(f"No valid data for instance at {issue_date_attempt}")
+                            except Exception as instance_err:
+                                print(f"  -> Failed instance {issue_date_attempt}: {instance_err}")
+                                instance_last_error = instance_err
+                                # Potentially add a small delay here if hitting API limits during lookback
+
+                        # If lookback finished without success, store the last error
+                        if not instance_success:
+                            print(f"  -> All {lookback_step+1} lookback attempts failed for instance curve.")
+                            last_exception = instance_last_error if instance_last_error else ValueError("Lookback failed without specific error.")
+                            # ts remains None
+
+                # --- Handle regular timeseries curves ---
                 else:
                     ts = curve.get_data(data_from=forecast_start_date, data_to=forecast_end_date)
+                    # Check if get_data returned None immediately
+                    if ts is None:
+                       print(f"  -> get_data returned None for {forecast_source_curve}")
+                       last_exception = ValueError(f"get_data returned None for {forecast_source_curve}")
 
-                # Check if data was returned
+
+                # --- Common Processing & Error Handling for this Attempt ---
                 if ts is None:
-                    print(f"  -> Warn: No data from API for {forecast_source_curve} (attempt {attempt+1}/{max_retries}).")
-                    last_exception = ValueError(f"No data from API for {forecast_source_curve}.")
+                    # This block is reached if any fetch method (special midnight, lookback, get_data)
+                    # resulted in ts being None for this attempt.
+                    print(f"  -> Warn: No valid data obtained for {forecast_source_curve} (attempt {attempt+1}/{max_retries}).")
+                    # Ensure last_exception is set if it wasn't already
+                    if last_exception is None:
+                         last_exception = ValueError(f"No data obtained for {forecast_source_curve}, reason unclear.")
+                    # Proceed to retry delay and next attempt
                     time.sleep(retry_delay)
-                    continue
-                
+                    continue # Go to the next retry attempt
+
+                # --- Process the successfully fetched timeseries (ts) ---
                 s = ts.to_pandas()
                 if s.empty:
-                    print(f"  -> Warn: Empty series for {forecast_source_curve} (attempt {attempt+1}/{max_retries}).")
+                    print(f"  -> Warn: Empty series for {forecast_source_curve} after fetch (attempt {attempt+1}/{max_retries}).")
                     last_exception = ValueError(f"Empty series for {forecast_source_curve}.")
                     time.sleep(retry_delay)
-                    continue
+                    continue # Go to the next retry attempt
 
-                # Align index and fill gaps
+                # Align index and fill gaps (crucial step)
                 s = s.reindex(dates, method='ffill').bfill()
-                
-                # Check for failure to align (all NaNs)
+
+                # Check for failure to align (all NaNs after reindex)
                 if s.isnull().all():
                     error_msg = f"Forecast data for {orig_col} from {forecast_source_curve} entirely NaN after reindex (no overlap with {dates.min()} - {dates.max()})."
                     print(f"  -> Error: {error_msg}")
-                    raise ValueError(error_msg)
-                
+                    last_exception = ValueError(error_msg) # Store specific error
+                    time.sleep(retry_delay) # Allow retry even for this
+                    continue # Go to the next retry attempt
+
+                # If we got here, s is valid, aligned, and has data
                 X_forecast[orig_col] = s
 
-                # Resample if needed (e.g., hourly to 15min)
-                if " h " in forecast_source_curve and X_forecast[orig_col].index.freq != pd.Timedelta(minutes=15):
-                    print(f"  -> Resampling hourly data for {orig_col} to 15min.")
-                    X_forecast[orig_col] = X_forecast[orig_col].resample('15min').ffill().reindex(dates, method='ffill').bfill()
-                    
+                # Resample if needed (e.g., hourly source to 15min target)
+                # Check source curve name OR frequency of the fetched series before resampling
+                source_freq = pd.infer_freq(s.index) # Try to infer freq if needed
+                target_freq = pd.infer_freq(dates)
+                # Basic check using name, refine if needed based on actual frequencies
+                if (" h " in forecast_source_curve or source_freq == 'h' or source_freq == 'H') and target_freq != source_freq:
+                    print(f"  -> Resampling hourly data for {orig_col} to {target_freq}.")
+                    # Resample to target frequency, then reindex again to be safe
+                    X_forecast[orig_col] = X_forecast[orig_col].resample(target_freq).ffill().reindex(dates, method='ffill').bfill()
+
                     # Re-check for all NaNs after resampling
                     if X_forecast[orig_col].isnull().all():
-                        raise ValueError(f"Forecast data for {orig_col} from {forecast_source_curve} entirely NaN after resampling/reindex.")
+                        error_msg = f"Forecast data for {orig_col} from {forecast_source_curve} entirely NaN after resampling/reindex."
+                        print(f"  -> Error: {error_msg}")
+                        last_exception = ValueError(error_msg)
+                        time.sleep(retry_delay)
+                        continue # Go to the next retry attempt
 
                 print(f"  -> External forecast OK for {orig_col}.")
                 success = True
-                last_exception = None
-                break  # Exit retry loop
-                
+                last_exception = None # Reset last exception on success
+                break  # Exit retry loop for this curve
+
             except Exception as e:
-                # Catch errors during fetch/processing attempt
+                # Catch any other unexpected errors during the attempt
                 print(f"  -> Error processing {forecast_source_curve} (attempt {attempt+1}/{max_retries}): {str(e)}")
-                last_exception = e
+                last_exception = e # Store the exception
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)  # Wait before retrying
 
-        # If all retries failed for this curve
+
+        # --- After all retries for a curve ---
         if not success:
             error_msg = f"Failed fetch/process external forecast for {orig_col} from {forecast_source_curve} after {max_retries} attempts."
-            print(f"  -> {error_msg}")
-            # Raise runtime error, including the last exception encountered
-            raise RuntimeError(error_msg, last_exception) from last_exception
+            print(f"  -> FINAL FAILURE: {error_msg}")
+            # Raise runtime error, including the last specific exception encountered if available
+            if last_exception:
+                raise RuntimeError(error_msg, last_exception) from last_exception
+            else:
+                raise RuntimeError(error_msg)
+
+    # --- After processing all curves ---
+    # Final check for any columns that might still be all NaN (shouldn't happen if logic above is correct)
+    if X_forecast.isnull().all().any():
+        nan_cols = X_forecast.columns[X_forecast.isnull().all()].tolist()
+        print(f"WARNING: Columns {nan_cols} are entirely NaN after forecast generation. Check data sources and alignment logic.")
 
     print("Forecast generation complete (or errors raised).")
     return X_forecast
