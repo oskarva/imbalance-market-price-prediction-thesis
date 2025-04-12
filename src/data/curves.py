@@ -8,8 +8,6 @@ curve_collections = {
             "no5",
             ],
         "X": [
-            #"vol {area} regulation up mwh cet h a",
-            #"vol {area} regulation down mwh cet h a",
             "con {area} intraday mwh/h cet h a", # consumption 
             "con {area} heating % cet min15 s", # need for heat
             "con {area} cooling % cet min15 s", # need for cooling
@@ -23,15 +21,13 @@ curve_collections = {
             "pri {area} regulation down €/mwh cet min15 a",
         ],
         "X_to_forecast": {
-            #"vol {area} regulation up mwh cet h a"   : "vol {area} regulation up mwh cet h a",
-            #"vol {area} regulation down mwh cet h a" : "vol {area} regulation down mwh cet h a",
             "con {area} intraday mwh/h cet h a"      : "con {area} intraday mwh/h cet min15 f",
-            "con {area} heating % cet min15 s"       : "con {area} heating % cet min15 s",
-            "con {area} cooling % cet min15 s"       : "con {area} cooling % cet min15 s",
+            "con {area} heating % cet min15 s"       : "con {area} heating ec00 % cet min15 f",
+            "con {area} cooling % cet min15 s"       : "con {area} cooling ec00 % cet min15 f",
             "pri {area} spot €/mwh cet h a"          : "pri {area} spot €/mwh cet h a",
-            "rdl {area} mwh/h cet min15 a"           : "rdl {area} mwh/h cet min15 a",
+            "rdl {area} mwh/h cet min15 a"           : "rdl {area} ec00 mwh/h cet min15 f",
             "pro {area} hydro tot mwh/h cet h af"    : "pro {area} hydro tot mwh/h cet h f",
-            "pro {area} wnd mwh/h cet min15 a"       : "pro {area} wnd intraday mwh/h cet min15 f",
+            "pro {area} wnd mwh/h cet min15 a"       : "pro {area} wnd intraday lastec mwh/h cet min15 f",
         }
     },
 
