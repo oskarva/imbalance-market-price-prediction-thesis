@@ -6,3 +6,4 @@ scikit-learn==1.6.1
 xgboost==2.1.4
 interpret==0.6.9
 joblib==1.4.2
+statsmodels==0.14.4
