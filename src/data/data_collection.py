@@ -325,7 +325,7 @@ def get_data(X_curve_names, y_curve_names, sub_area, session,
     val_params = {
         'name': 'Validation',
         'start_round': val_start_round,
-        'end_round': val_end_round, # Exclusive end
+        'end_round': val_end_round, 
         'output_path': val_output_path,
         'checkpoint_file': val_checkpoint_file
     }
@@ -519,7 +519,7 @@ def create_cross_validation_sets_and_save(X_df, y_df, first_train_len, crossval_
 
 
             # Define indices for TRAINING data (ends at t)
-            train_end_idx = first_train_len + logical_round * crossval_horizon
+            train_end_idx = first_train_len + logical_round * crossval_horizon + 1 
 
             test_start_idx_shifted = train_end_idx 
             test_end_idx_shifted = min(test_start_idx_shifted + crossval_horizon, total_len) # End 'horizon' steps later
