@@ -40,7 +40,7 @@ def main():
     #parser.add_argument('--include-y-in-x', action='store_true', help='Include target variables (y) in the feature set (X).')
 
     # --- Path Arguments ---
-    parser.add_argument('--output-dir', type=str, default="./data/two_stage_cv",
+    parser.add_argument('--output-dir', type=str, default="./src/data/csv",
                         help='Base directory to save the output folders (validation_rounds, test_rounds). Default: ./data/two_stage_cv')
 
     # --- Other Arguments ---
