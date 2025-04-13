@@ -103,6 +103,11 @@ def main():
         print(f"\n=== Processing Collection for Sub-Area: {sub_area} ===")
         X_curve_names = collection.get("X"); target_curves = collection.get("y")
         X_to_forecast = collection.get("X_to_forecast", {})
+
+        #EXCEPTION: NO5 does not have wind data
+        if sub_area == "no5":
+            X_curve_names.remove("pro no5 wnd mwh/h cet min15 a")
+            X_to_forecast.pop("pro no5 wnd mwh/h cet min15 a")
         # Basic validation of collection content
         if not X_curve_names or not target_curves: print(f"Warn: Skipping '{sub_area}', missing 'X'/'y'."); continue
         if not X_to_forecast: print(f"Warn: Skipping '{sub_area}', missing 'X_to_forecast'."); continue

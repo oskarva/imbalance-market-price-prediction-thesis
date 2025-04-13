@@ -67,7 +67,6 @@ def get_data(X_curve_names, y_curve_names, sub_area, session,
         print(f"Initial data shape after NaN row removal: {cleaned_df.shape}")
         print(f"Initial data range: {cleaned_df.index.min()} to {cleaned_df.index.max()}")
 
-        # ---> START FIX: Synchronize Timezone Awareness <---
         data_tz = cleaned_df.index.tz
         if data_tz:
             print(f"Data index is timezone-aware ({data_tz}). Applying timezone to input dates.")
@@ -117,8 +116,6 @@ def get_data(X_curve_names, y_curve_names, sub_area, session,
         elif not start_date < val_start_date < test_start_date < end_date:
              raise ValueError("Dates must be ordered: start < val_start < test_start < end")
 
-
-        # ---> END FIX <---
 
     except Exception as e:
         print(f"Error during data fetching/cleaning or timezone sync: {e}")
@@ -430,14 +427,15 @@ def create_cross_validation_sets_and_save(X_df, y_df, first_train_len, crossval_
     """
     Creates rolling-origin CV sets for validation and test phases defined by round ranges.
     Saves files to phase-specific directories and uses phase-specific checkpoints.
+    The test window for y_test and X_test is shifted to represent t+1 to t+horizon.
     Resets file numbering when transitioning from validation to test phase.
     If a forecast can't be found (even after lookback), skips the round and continues.
 
     Parameters:
     -----------
-    X_df, y_df: DataFrames with features and targets.
+    X_df, y_df: DataFrames with features and targets, time-indexed.
     first_train_len: Index marking the end of the initial training set (before val starts).
-    crossval_horizon: Number of steps per round.
+    crossval_horizon: Number of steps per round (e.g., 32 for t+1 to t+32).
     X_to_forecast: Dict mapping columns to external forecast curve names.
     session: API session.
     val_params: Dict {'name', 'start_round', 'end_round', 'output_path', 'checkpoint_file'}.
@@ -451,8 +449,7 @@ def create_cross_validation_sets_and_save(X_df, y_df, first_train_len, crossval_
     processed_test_count = 0
     total_len = len(X_df)
 
-    # Process validation rounds first, then test rounds, to ensure proper order
-    # and reset file numbering between phases
+    # Process validation rounds first, then test rounds
     phases = [
         ('Validation', val_params, 0),  # Start val file numbering at 0
         ('Test', test_params, 0)        # Start test file numbering at 0
@@ -476,15 +473,14 @@ def create_cross_validation_sets_and_save(X_df, y_df, first_train_len, crossval_
                 with open(checkpoint_file, 'r') as f:
                     checkpoint_data = f.read().strip().split(',')
                     if len(checkpoint_data) >= 2 and checkpoint_data[0].isdigit() and checkpoint_data[1].isdigit():
-                        # Format: "logical_round,file_number"
                         resume_from_round = int(checkpoint_data[0])
                         resume_from_file_num = int(checkpoint_data[1])
                         print(f"Resuming {phase_name} phase from logical round {resume_from_round} (file number {resume_from_file_num})")
-                    elif len(checkpoint_data) == 1 and checkpoint_data[0].isdigit():
-                        # Backward compatibility with old checkpoint format
+                    elif len(checkpoint_data) == 1 and checkpoint_data[0].isdigit(): # Backward compatibility
                         resume_from_round = int(checkpoint_data[0])
+                        # Estimate file number based on round (might be off if rounds were skipped)
                         resume_from_file_num = resume_from_round - params['start_round'] + starting_file_num
-                        print(f"Resuming {phase_name} phase from round {resume_from_round} (old format)")
+                        print(f"Resuming {phase_name} phase from round {resume_from_round} (old format, estimated file# {resume_from_file_num})")
             except Exception as e:
                 print(f"Warning: Could not read {phase_name} checkpoint '{checkpoint_file}': {e}")
 
@@ -493,68 +489,72 @@ def create_cross_validation_sets_and_save(X_df, y_df, first_train_len, crossval_
             os.makedirs(output_path, exist_ok=True)
         except OSError as e:
             print(f"Error creating output directory '{output_path}': {e}")
-            continue  # Skip this phase but try the next one
+            continue  # Skip this phase
 
         # Process all rounds for this phase
         file_counter = resume_from_file_num  # Start file numbering from checkpoint or default
         for logical_round in range(max(params['start_round'], resume_from_round), params['end_round']):
             print(f"\n--- Processing {phase_name} Round {logical_round} (File #{file_counter}) ---")
 
-            # Check if files already exist for this file counter in this phase's folder
+            # Check if files already exist
             file_base_path = os.path.join(output_path, f"X_train_{file_counter}.csv")
             if os.path.exists(file_base_path):
-                # Verify all four files exist before skipping
                 files_exist = all(os.path.exists(os.path.join(output_path, f"{prefix}_{file_counter}.csv"))
                                  for prefix in ["X_train", "y_train", "X_test", "y_test"])
                 if files_exist:
                     print(f"Files for {phase_name} round {logical_round} (File #{file_counter}) already exist, skipping...")
-                    # Update checkpoint for this phase
                     try:
                         with open(checkpoint_file, 'w') as f:
                             f.write(f"{logical_round+1},{file_counter+1}")
                     except IOError as e:
                         print(f"Warning: Could not write {phase_name} checkpoint: {e}")
-                    
-                    # Increment counters
-                    if phase_name == 'Validation':
-                        processed_val_count += 1
-                    else:
-                        processed_test_count += 1
-                    
+
+                    if phase_name == 'Validation': processed_val_count += 1
+                    else: processed_test_count += 1
                     file_counter += 1
                     continue
                 else:
                     print(f"Warning: Found some but not all files for {phase_name} round {logical_round} (File #{file_counter}). Re-generating.")
 
-            # Define indices
-            train_end_idx = first_train_len + logical_round * crossval_horizon
-            test_start_idx = train_end_idx
-            test_end_idx = min(test_start_idx + crossval_horizon, total_len)
 
-            # Check if there's enough data for a full prediction horizon
-            if test_end_idx - test_start_idx < crossval_horizon:
-                print(f"{phase_name} round {logical_round}: Insufficient data points ({test_end_idx - test_start_idx}) for full horizon ({crossval_horizon}). Stopping generation.")
+
+            # Define indices for TRAINING data (ends at t)
+            train_end_idx = first_train_len + logical_round * crossval_horizon
+
+            test_start_idx_shifted = train_end_idx 
+            test_end_idx_shifted = min(test_start_idx_shifted + crossval_horizon, total_len) # End 'horizon' steps later
+
+            
+            if test_end_idx_shifted - test_start_idx_shifted < crossval_horizon:
+                print(f"{phase_name} round {logical_round}: Insufficient data points ({test_end_idx_shifted - test_start_idx_shifted}) "
+                      f"for full shifted horizon ({crossval_horizon}) starting at index {test_start_idx_shifted}. Stopping generation.")
                 try:
                     # Checkpoint should reflect the round that failed
                     with open(checkpoint_file, 'w') as f:
                         f.write(f"{logical_round},{file_counter}")
                 except IOError as e:
                     print(f"Warning: Could not write {phase_name} checkpoint: {e}")
-                
-                # Stop processing this phase
-                break
+                break # Stop processing this phase
 
-            print(f"{phase_name} round {logical_round}: Train indices [0, {train_end_idx}), Test indices [{test_start_idx}, {test_end_idx})")
+           
+            print(f"{phase_name} round {logical_round}: Train indices [0, {train_end_idx}), "
+                  f"Test indices (t+1 to t+H) [{test_start_idx_shifted}, {test_end_idx_shifted})")
 
-            # Extract data slices
+            
             X_train = X_df.iloc[:train_end_idx]
             y_train = y_df.iloc[:train_end_idx]
-            y_test = y_df.iloc[test_start_idx:test_end_idx]
+            
+            y_test = y_df.iloc[test_start_idx_shifted:test_end_idx_shifted]
+            
             forecast_dates = y_test.index
 
-            # Double-check length
+
+
+            # Double-check length of the new y_test (should still be horizon)
             if len(forecast_dates) != crossval_horizon:
-                print(f"Error: {phase_name} round {logical_round}: Forecast dates length ({len(forecast_dates)}) != horizon ({crossval_horizon}). Check logic.")
+                
+                print(f"Error: {phase_name} round {logical_round}: Shifted forecast dates length ({len(forecast_dates)}) "
+                      f"!= horizon ({crossval_horizon}). Check index logic near {test_start_idx_shifted}:{test_end_idx_shifted}.")
                 try:
                     with open(checkpoint_file, 'w') as f:
                         f.write(f"{logical_round},{file_counter}")
@@ -562,52 +562,47 @@ def create_cross_validation_sets_and_save(X_df, y_df, first_train_len, crossval_
                     print(f"Warning: Could not write {phase_name} checkpoint: {e}")
                 break
 
-            # Generate forecast features for X_test
-            print(f"Generating forecast features for {phase_name} round {logical_round}...")
+           
+            print(f"Generating forecast features for {phase_name} round {logical_round} (Shifted Window t+1 to t+H)...")
             try:
+                
                 X_test = get_forecast(
-                    dates=forecast_dates, 
-                    X_train=X_train,
-                    X_to_forecast=X_to_forecast, 
+                    dates=forecast_dates, # Pass the SHIFTED dates
+                    X_train=X_train,      # Training data ends at t
+                    X_to_forecast=X_to_forecast,
                     session=session,
-                    max_lookback_hours=24,     # Add lookback parameters
+                    max_lookback_hours=24,     
                     lookback_step_minutes=15
                 )
-                
-                # Verify index alignment post-forecast
+
+                # Verify index alignment post-forecast (important!)
                 if not X_test.index.equals(forecast_dates):
                     print(f"Warning: {phase_name} round {logical_round}: X_test index mismatch after get_forecast. Re-aligning.")
-                    X_test = X_test.reindex(forecast_dates)
-                
+                    X_test = X_test.reindex(forecast_dates) # Align to the shifted dates
+
                 # Verify no NaNs remain after potential re-alignment
                 if X_test.isnull().any().any():
-                    # This indicates a problem in get_forecast or the source data
                     raise ValueError(f"NaNs found in X_test for {phase_name} round {logical_round} after forecasting/alignment.")
 
             except (RuntimeError, ValueError) as e:
-                # CHANGE: Instead of raising the error, catch and log it, then skip this round
                 print(f"--- ERROR: Failed forecast features for {phase_name} Round {logical_round} ---")
                 print(f"  Reason: {e}")
-                print(f"  No valid forecast found even after 24-hour lookback. Skipping this round.")
-                
-                # Update the checkpoint to move past this round
+                print(f"  Skipping this round.")
                 try:
+                    # Update checkpoint to skip this failed round
                     with open(checkpoint_file, 'w') as f:
-                        f.write(f"{logical_round+1},{file_counter}")  # Notice we increment logical_round but NOT file_counter
+                        f.write(f"{logical_round+1},{file_counter}") # Skip round, keep file counter
                 except IOError as cp_e:
                     print(f"Warning: Could not write {phase_name} checkpoint: {cp_e}")
-                
-                # Continue to the next round without incrementing file_counter
-                continue  # Skip the rest of this iteration
+                continue # Skip rest of loop for this round
 
-            # Save files using the file counter (not the logical round number)
             print(f"Saving sets for {phase_name} round {logical_round} as file #{file_counter} to {output_path}")
             X_train.to_csv(os.path.join(output_path, f"X_train_{file_counter}.csv"), index=True)
             y_train.to_csv(os.path.join(output_path, f"y_train_{file_counter}.csv"), index=True)
-            X_test.to_csv(os.path.join(output_path, f"X_test_{file_counter}.csv"), index=True)
-            y_test.to_csv(os.path.join(output_path, f"y_test_{file_counter}.csv"), index=True)
+            X_test.to_csv(os.path.join(output_path, f"X_test_{file_counter}.csv"), index=True) 
+            y_test.to_csv(os.path.join(output_path, f"y_test_{file_counter}.csv"), index=True) 
 
-            # Update checkpoint with both logical round and file counter
+            # Update checkpoint with successful round and file counter
             try:
                 with open(checkpoint_file, 'w') as f:
                     f.write(f"{logical_round+1},{file_counter+1}")
@@ -619,20 +614,19 @@ def create_cross_validation_sets_and_save(X_df, y_df, first_train_len, crossval_
                 processed_val_count += 1
             else:
                 processed_test_count += 1
-            
+
             # Increment file counter
             file_counter += 1
 
             # Memory cleanup logic
             if file_counter % batch_size == 0:
                 print(f"--- {phase_name} round {logical_round}: Cleaning memory after batch ---")
-                # Delete large objects from this iteration
-                del X_train, y_train, X_test, y_test
-                # Explicitly call garbage collector
+                del X_train, y_train, X_test, y_test, forecast_dates # Include forecast_dates
                 gc.collect()
 
-    print(f"\n--- Finished CV Set Generation: {processed_val_count} validation and {processed_test_count} test rounds ---")
+    print(f"\n--- Finished CV Set Generation: {processed_val_count} validation and {processed_test_count} test rounds processed ---")
     return processed_val_count, processed_test_count
+
 
 def get_forecast(dates, X_train, X_to_forecast, session, max_retries=3, retry_delay=10,
                  max_lookback_hours=24, lookback_step_minutes=15):
