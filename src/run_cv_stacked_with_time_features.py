@@ -58,30 +58,32 @@ def add_time_features(df):
 
 def process_single_round_stacked_with_saved_model(round_num, target, target_dir, x_files_dir,
                                                   target_index, ebm_params, xgb_params,
-                                                  models_dir=None, best_ebm_param_name=None):
+                                                  models_dir=None, best_ebm_param_name=None, phase="validation"):
     """
     Process a single CV round for full stacked model using saved EBM models.
     Loads the saved EBM model if available, otherwise trains a new one.
-    Data loading now includes adding time features.
+    Data loading now includes adding time features and phase selection.
 
     Returns:
         Dictionary with round results or None if error
     """
     try:
-        print(f"\nProcessing round {round_num} with stacked model using saved EBM...")
+        print(f"\nProcessing round {round_num} ({phase}) with stacked model using saved EBM...")
 
-        # Load data for this round (includes adding time features)
+        # Load data for this round (includes adding time features and phase selection)
         X_train, y_train, X_test, y_test = load_cv_round(
             cv_round=round_num,
             target_dir=target_dir,
             x_files_dir=x_files_dir,
-            target_index=target_index
+            target_index=target_index,
+            phase=phase # Pass phase
         )
 
         # Try to load the saved EBM model if available
         ebm_model = None
         if models_dir is not None and best_ebm_param_name is not None:
-            model_filename = f"{target}_ind_{target_index}_{best_ebm_param_name}_round_{round_num}.joblib"
+            # Include phase in model filename
+            model_filename = f"{target}_ind_{target_index}_{best_ebm_param_name}_round_{round_num}_{phase}.joblib"
             model_path = os.path.join(models_dir, model_filename)
 
             if os.path.exists(model_path):
@@ -93,13 +95,13 @@ def process_single_round_stacked_with_saved_model(round_num, target, target_dir,
 
         # If loading failed or no saved model, train a new one
         if ebm_model is None:
-            print(f"  No saved model found or loading failed. Training new EBM model for round {round_num}...")
+            print(f"  No saved model found or loading failed. Training new EBM model for round {round_num} ({phase})...")
             ebm_model = ExplainableBoostingRegressor(**ebm_params)
 
             # Handle whether y_train is Series or DataFrame
             if isinstance(y_train, pd.DataFrame):
                 y_train_vals = y_train.iloc[:, 0].values
-            else:  # It's a Series
+            else: # It's a Series
                 y_train_vals = y_train.values
 
             # Fit EBM model
@@ -117,16 +119,16 @@ def process_single_round_stacked_with_saved_model(round_num, target, target_dir,
 
         # Check if we skipped this round due to errors
         if result['xgb_model'] is None:
-            print(f"  Skipping round {round_num} due to model training errors.")
+            print(f"  Skipping round {round_num} ({phase}) due to model training errors.")
             return None
 
         # Add round number to predictions
         result['predictions']['round'] = round_num
 
         # Print round results
-        print(f"  Round {round_num} - Stacked Model: MAE: {result['metrics']['mae']:.4f}, R²: {result['metrics']['r2']:.4f}")
-        print(f"  Round {round_num} - EBM Only: MAE: {result['metrics']['ebm_mae']:.4f}, R²: {result['metrics']['ebm_r2']:.4f}")
-        print(f"  Round {round_num} - Improvement: MAE: {result['metrics']['mae_improvement']:.2f}%, R²: {result['metrics']['r2_improvement']:.2f}%")
+        print(f"  Round {round_num} ({phase}) - Stacked Model: MAE: {result['metrics']['mae']:.4f}, R²: {result['metrics']['r2']:.4f}")
+        print(f"  Round {round_num} ({phase}) - EBM Only: MAE: {result['metrics']['ebm_mae']:.4f}, R²: {result['metrics']['ebm_r2']:.4f}")
+        print(f"  Round {round_num} ({phase}) - Improvement: MAE: {result['metrics']['mae_improvement']:.2f}%, R²: {result['metrics']['r2_improvement']:.2f}%")
 
         return {
             'round_num': round_num,
@@ -136,7 +138,7 @@ def process_single_round_stacked_with_saved_model(round_num, target, target_dir,
             'xgb_model': result['xgb_model']
         }
     except Exception as e:
-        print(f"Error processing round {round_num} with stacked model: {str(e)}")
+        print(f"Error processing round {round_num} ({phase}) with stacked model: {str(e)}")
         return None
 
 def sample_rounds_evenly(start, end, n_samples):
@@ -163,13 +165,14 @@ def sample_rounds_evenly(start, end, n_samples):
 
     return sampled_rounds
 
-def get_available_targets(organized_dir="./src/data/csv", areas=["no1", "no2", "no3", "no4", "no5"]):
+def get_available_targets(organized_dir="./src/data/csv", areas=["no1", "no2", "no3", "no4", "no5"], phase="validation"):
     """
-    Get list of available targets from the organized directory structure.
+    Get list of available targets from the organized directory structure for a specific phase.
 
     Args:
         organized_dir: Base directory for organized files
         areas: List of area directories to check
+        phase: Either "validation" or "test" to specify which phase's data to check
 
     Returns:
         List of available targets (directory names)
@@ -179,20 +182,24 @@ def get_available_targets(organized_dir="./src/data/csv", areas=["no1", "no2", "
     # Look for subdirectories that match the specified areas
     for item in os.listdir(organized_dir):
         if item in areas:
-            targets.append(item)
+            # Check if this area has the specified phase's folder
+            phase_dir = os.path.join(organized_dir, item, f"{phase}_rounds")
+            if os.path.isdir(phase_dir) and any(f.startswith('y_test_') for f in os.listdir(phase_dir)):
+                targets.append(item)
 
     return targets
 
-def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0):
+def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0, phase="validation"):
     """
     Load a specific cross-validation round's data for a target,
-    adding time features to X data.
+    adding time features to X data and selecting the correct phase.
 
     Args:
         cv_round: The cross-validation round number to load
         target_dir: Directory containing target-specific files
         x_files_dir: Directory containing X files
         target_index: Index (0-based) for which target column to return if multiple targets exist
+        phase: Either "validation" or "test" to specify which phase's data to load
 
     Returns:
         Tuple containing (X_train, y_train, X_test, y_test) as pandas DataFrames or Series.
@@ -200,13 +207,24 @@ def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0):
         y_train and y_test will be the selected target column.
     """
     try:
-        # Load X data
-        X_train = pd.read_csv(f"{x_files_dir}/X_train_{cv_round}.csv", index_col=0)
-        X_test = pd.read_csv(f"{x_files_dir}/X_test_{cv_round}.csv", index_col=0)
+        # Construct paths with phase folder
+        phase_folder = f"{phase}_rounds"
+        phase_dir = os.path.join(target_dir, phase_folder)
+        x_phase_dir = os.path.join(x_files_dir, phase_folder)
 
-        # Load y data from target-specific directory
-        y_train = pd.read_csv(f"{target_dir}/y_train_{cv_round}.csv", index_col=0)
-        y_test = pd.read_csv(f"{target_dir}/y_test_{cv_round}.csv", index_col=0)
+        # Verify directories exist
+        if not os.path.isdir(phase_dir):
+            raise FileNotFoundError(f"Phase directory not found: {phase_dir}")
+        if not os.path.isdir(x_phase_dir):
+            raise FileNotFoundError(f"X phase directory not found: {x_phase_dir}")
+
+        # Load X data from phase directory
+        X_train = pd.read_csv(f"{x_phase_dir}/X_train_{cv_round}.csv", index_col=0)
+        X_test = pd.read_csv(f"{x_phase_dir}/X_test_{cv_round}.csv", index_col=0)
+
+        # Load y data from phase directory
+        y_train = pd.read_csv(f"{phase_dir}/y_train_{cv_round}.csv", index_col=0)
+        y_test = pd.read_csv(f"{phase_dir}/y_test_{cv_round}.csv", index_col=0)
 
         # Convert indices to datetime with utc=True to avoid warnings
         X_train.index = pd.to_datetime(X_train.index, utc=True)
@@ -215,7 +233,7 @@ def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0):
         y_test.index = pd.to_datetime(y_test.index, utc=True)
 
         # --- Add Time Features to X data ---
-        print(f"  Adding time features to X_train and X_test for round {cv_round}...")
+        print(f"  Adding time features to X_train and X_test for round {cv_round} ({phase})...")
         X_train = add_time_features(X_train)
         X_test = add_time_features(X_test)
         print(f"  New X_train columns count: {len(X_train.columns)}") # Less verbose logging
@@ -234,20 +252,29 @@ def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0):
 
         return X_train, y_train, X_test, y_test
     except Exception as e:
-        print(f"Error loading CV round {cv_round}: {e}")
+        print(f"Error loading CV round {cv_round} for phase {phase}: {e}")
         raise
 
-def get_cv_round_count(target_dir):
+def get_cv_round_count(target_dir, phase="validation"):
     """
-    Get the total number of cross-validation rounds available for a target.
+    Get the total number of cross-validation rounds available for a target for a specific phase.
 
     Args:
         target_dir: Directory containing target-specific files
+        phase: Either "validation" or "test" to specify which phase's data to count
 
     Returns:
         int: The number of cross-validation rounds
     """
-    y_test_files = [f for f in os.listdir(target_dir) if f.startswith('y_test_')]
+    # Construct path with phase folder
+    phase_folder = f"{phase}_rounds"
+    phase_dir = os.path.join(target_dir, phase_folder)
+
+    # Verify directory exists
+    if not os.path.isdir(phase_dir):
+        raise FileNotFoundError(f"Phase directory not found: {phase_dir}")
+
+    y_test_files = [f for f in os.listdir(phase_dir) if f.startswith('y_test_')]
 
     # Extract round numbers from filenames
     round_numbers = []
@@ -259,7 +286,7 @@ def get_cv_round_count(target_dir):
             continue
 
     if not round_numbers:
-        raise FileNotFoundError(f"No cross-validation files found in {target_dir}")
+        raise FileNotFoundError(f"No cross-validation files found in {phase_dir}")
 
     return max(round_numbers) + 1  # +1 because we count from 0
 
@@ -279,12 +306,12 @@ def train_and_evaluate_ebm(X_train, y_train, X_test, y_test, ebm_params):
     # Handle whether y_train/y_test are Series or DataFrame
     if isinstance(y_train, pd.DataFrame):
         y_train_vals = y_train.iloc[:, 0].values
-    else:  # It's a Series
+    else: # It's a Series
         y_train_vals = y_train.values
 
     if isinstance(y_test, pd.DataFrame):
         y_test_vals = y_test.iloc[:, 0].values
-    else:  # It's a Series
+    else: # It's a Series
         y_test_vals = y_test.values
 
     # Check for and handle NaN or infinity values in training data
@@ -431,12 +458,12 @@ def train_and_evaluate_stacked(X_train, y_train, X_test, y_test, ebm_model, xgb_
         # Handle whether y_train/y_test are Series or DataFrame
         if isinstance(y_train, pd.DataFrame):
             y_train_vals = y_train.iloc[:, 0].values
-        else:  # It's a Series
+        else: # It's a Series
             y_train_vals = y_train.values
 
         if isinstance(y_test, pd.DataFrame):
             y_test_vals = y_test.iloc[:, 0].values
-        else:  # It's a Series
+        else: # It's a Series
             y_test_vals = y_test.values
 
         # Calculate residuals for training data
@@ -515,23 +542,24 @@ def train_and_evaluate_stacked(X_train, y_train, X_test, y_test, ebm_model, xgb_
         }
 
 def process_single_round_ebm(round_num, target, target_dir, x_files_dir, target_index, ebm_params,
-                             models_dir=None, param_name=None):
+                             models_dir=None, param_name=None, phase="validation"):
     """
     Process a single CV round for EBM model - helper function for parallelization.
-    Data loading now includes adding time features.
+    Data loading now includes adding time features and phase selection.
 
     Returns:
         Dictionary with round results or None if error
     """
     try:
-        print(f"\nProcessing round {round_num} with EBM...")
+        print(f"\nProcessing round {round_num} ({phase}) with EBM...")
 
-        # Load data for this round (includes adding time features)
+        # Load data for this round (includes adding time features and phase selection)
         X_train, y_train, X_test, y_test = load_cv_round(
             cv_round=round_num,
             target_dir=target_dir,
             x_files_dir=x_files_dir,
-            target_index=target_index
+            target_index=target_index,
+            phase=phase # Pass phase
         )
 
         # Train and evaluate EBM
@@ -545,13 +573,13 @@ def process_single_round_ebm(round_num, target, target_dir, x_files_dir, target_
 
         # Check if we skipped this round due to not enough valid data or errors
         if result['model'] is None:
-            print(f"  Skipping round {round_num} due to model training errors or insufficient valid data.")
+            print(f"  Skipping round {round_num} ({phase}) due to model training errors or insufficient valid data.")
             return None
 
         # Save the model if a models directory and parameter name are provided
         if result['model'] is not None and models_dir is not None and param_name is not None:
-            # Create a filename for the saved model
-            model_filename = f"{target}_ind_{target_index}_{param_name}_round_{round_num}.joblib"
+            # Create a filename for the saved model, including phase
+            model_filename = f"{target}_ind_{target_index}_{param_name}_round_{round_num}_{phase}.joblib"
             model_path = os.path.join(models_dir, model_filename)
 
             # Save the model
@@ -565,7 +593,7 @@ def process_single_round_ebm(round_num, target, target_dir, x_files_dir, target_
         result['predictions']['round'] = round_num
 
         # Print round results
-        print(f"  Round {round_num} - MAE: {result['metrics']['mae']:.4f}, RMSE: {result['metrics']['rmse']:.4f}, R²: {result['metrics']['r2']:.4f}")
+        print(f"  Round {round_num} ({phase}) - MAE: {result['metrics']['mae']:.4f}, RMSE: {result['metrics']['rmse']:.4f}, R²: {result['metrics']['r2']:.4f}")
 
         return {
             'round_num': round_num,
@@ -585,38 +613,39 @@ def process_single_round_ebm(round_num, target, target_dir, x_files_dir, target_
             }
         }
     except Exception as e:
-        print(f"Error processing round {round_num}: {str(e)}")
+        print(f"Error processing round {round_num} ({phase}): {str(e)}")
         return None
 
 def process_single_round_stacked(round_num, target, target_dir, x_files_dir, target_index,
-                                 ebm_params, xgb_params):
+                                 ebm_params, xgb_params, phase="validation"):
     """
     Process a single CV round for full stacked model - helper function for parallelization.
     Each round gets its own independently trained EBM and XGBoost models.
-    Data loading now includes adding time features.
+    Data loading now includes adding time features and phase selection.
 
     Returns:
         Dictionary with round results or None if error
     """
     try:
-        print(f"\nProcessing round {round_num} with stacked model...")
+        print(f"\nProcessing round {round_num} ({phase}) with stacked model...")
 
-        # Load data for this round (includes adding time features)
+        # Load data for this round (includes adding time features and phase selection)
         X_train, y_train, X_test, y_test = load_cv_round(
             cv_round=round_num,
             target_dir=target_dir,
             x_files_dir=x_files_dir,
-            target_index=target_index
+            target_index=target_index,
+            phase=phase # Pass phase
         )
 
         # First train EBM model for this round
-        print(f"  Training EBM model for round {round_num}...")
+        print(f"  Training EBM model for round {round_num} ({phase})...")
         ebm_model = ExplainableBoostingRegressor(**ebm_params)
 
         # Handle whether y_train is Series or DataFrame
         if isinstance(y_train, pd.DataFrame):
             y_train_vals = y_train.iloc[:, 0].values
-        else:  # It's a Series
+        else: # It's a Series
             y_train_vals = y_train.values
 
         # Fit EBM model
@@ -634,16 +663,16 @@ def process_single_round_stacked(round_num, target, target_dir, x_files_dir, tar
 
         # Check if we skipped this round due to errors
         if result['xgb_model'] is None:
-            print(f"  Skipping round {round_num} due to model training errors.")
+            print(f"  Skipping round {round_num} ({phase}) due to model training errors.")
             return None
 
         # Add round number to predictions
         result['predictions']['round'] = round_num
 
         # Print round results
-        print(f"  Round {round_num} - Stacked Model: MAE: {result['metrics']['mae']:.4f}, R²: {result['metrics']['r2']:.4f}")
-        print(f"  Round {round_num} - EBM Only: MAE: {result['metrics']['ebm_mae']:.4f}, R²: {result['metrics']['ebm_r2']:.4f}")
-        print(f"  Round {round_num} - Improvement: MAE: {result['metrics']['mae_improvement']:.2f}%, R²: {result['metrics']['r2_improvement']:.2f}%")
+        print(f"  Round {round_num} ({phase}) - Stacked Model: MAE: {result['metrics']['mae']:.4f}, R²: {result['metrics']['r2']:.4f}")
+        print(f"  Round {round_num} ({phase}) - EBM Only: MAE: {result['metrics']['ebm_mae']:.4f}, R²: {result['metrics']['ebm_r2']:.4f}")
+        print(f"  Round {round_num} ({phase}) - Improvement: MAE: {result['metrics']['mae_improvement']:.2f}%, R²: {result['metrics']['r2_improvement']:.2f}%")
 
         return {
             'round_num': round_num,
@@ -653,15 +682,15 @@ def process_single_round_stacked(round_num, target, target_dir, x_files_dir, tar
             'xgb_model': result['xgb_model']
         }
     except Exception as e:
-        print(f"Error processing round {round_num} with stacked model: {str(e)}")
+        print(f"Error processing round {round_num} ({phase}) with stacked model: {str(e)}")
         return None
 
 def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
                                 ebm_parameter_sets=None, output_dir=None,
                                 organized_dir="./src/data/csv", target_index=0,
-                                parallel=True, max_workers=None, sample=None):
+                                parallel=True, max_workers=None, sample=None, phase="validation"):
     """
-    Evaluate different EBM parameter sets and find the best one.
+    Evaluate different EBM parameter sets and find the best one for a specific phase.
     Uses data with added time features.
 
     Args:
@@ -676,6 +705,7 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
         parallel: Whether to use parallel processing
         max_workers: Maximum number of parallel workers (None = auto)
         sample: If specified, sample this many rounds evenly instead of using all rounds
+        phase: Either "validation" or "test" to specify which phase's data to use
 
     Returns:
         Dictionary with the best EBM parameter set and evaluation results
@@ -693,19 +723,19 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
     # Get timestamp for this evaluation
     timestamp = time.strftime("%Y%m%d-%H%M%S")
 
-    # Create output directory
+    # Create output directory including phase
     if output_dir is None:
-        # Add _timefeat to directory name
-        output_dir = f"./results/stacked_optimization_timefeat/{timestamp}"
+        # Add _timefeat and phase to directory name
+        output_dir = f"./results/stacked_optimization_timefeat/{timestamp}_{phase}"
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # Create a models directory for saving trained EBM models
-    models_dir = os.path.join(output_dir, "saved_ebm_models")
+    # Create a models directory for saving trained EBM models, including phase
+    models_dir = os.path.join(output_dir, f"saved_ebm_models_{phase}")
     os.makedirs(models_dir, exist_ok=True)
 
-    # Get total number of rounds
-    total_rounds = get_cv_round_count(target_dir)
+    # Get total number of rounds for the specified phase
+    total_rounds = get_cv_round_count(target_dir, phase=phase)
 
     # Set default end_round if not provided
     if end_round is None:
@@ -716,7 +746,7 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
     # Get list of rounds to process
     if sample is not None:
         rounds_to_process = sample_rounds_evenly(start_round, end_round, sample)
-        print(f"Sampling {len(rounds_to_process)} rounds evenly from {start_round} to {end_round-1}")
+        print(f"Sampling {len(rounds_to_process)} rounds evenly from {start_round} to {end_round-1} for phase '{phase}'")
     else:
         rounds_to_process = list(range(start_round, end_round, step))
 
@@ -726,12 +756,12 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
     # Try each EBM parameter set
     for param_name, ebm_params in ebm_parameter_sets.items():
         print(f"\n{'='*80}")
-        print(f"Evaluating EBM parameter set: {param_name} (with time features)")
+        print(f"Evaluating EBM parameter set: {param_name} (Phase: {phase}, with time features)")
         print(f"Parameters: {ebm_params}")
         print(f"{'='*80}")
 
-        # Create directory for this parameter set
-        param_output_dir = os.path.join(output_dir, f"{target}_ind_{target_index}_{param_name}")
+        # Create directory for this parameter set, including phase
+        param_output_dir = os.path.join(output_dir, f"{target}_ind_{target_index}_{param_name}_{phase}")
         os.makedirs(param_output_dir, exist_ok=True)
 
         # Save configuration
@@ -743,7 +773,8 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
             'timestamp': timestamp,
             'rounds': rounds_to_process,
             'sampled': sample is not None,
-            'time_features_added': True # Indicate time features were used
+            'time_features_added': True, # Indicate time features were used
+            'phase': phase # Save phase
         }
 
         with open(os.path.join(param_output_dir, 'config.json'), 'w') as f:
@@ -755,7 +786,7 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
             if max_workers is None:
                 max_workers = min(multiprocessing.cpu_count(), len(rounds_to_process))
 
-            print(f"Running with {max_workers} parallel workers")
+            print(f"Running with {max_workers} parallel workers for phase '{phase}'")
 
             # Create a partial function with fixed arguments
             process_func = partial(
@@ -766,7 +797,8 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
                 target_index=target_index,
                 ebm_params=ebm_params,
                 models_dir=models_dir,  # Pass models directory
-                param_name=param_name   # Pass parameter set name
+                param_name=param_name,   # Pass parameter set name
+                phase=phase # Pass phase
             )
 
             # Run in parallel
@@ -789,7 +821,8 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
                     target_index,
                     ebm_params,
                     models_dir=models_dir,  # Pass models directory
-                    param_name=param_name   # Pass parameter set name
+                    param_name=param_name,   # Pass parameter set name
+                    phase=phase # Pass phase
                 )
 
                 if result is not None:
@@ -797,7 +830,7 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
 
         # Process the results
         if not results:
-            print(f"No successful rounds for parameter set {param_name}")
+            print(f"No successful rounds for parameter set {param_name} in phase '{phase}'")
             continue
 
         # Extract metrics
@@ -832,7 +865,7 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
                  plt.plot([min_val, max_val], [min_val, max_val], 'r--')
         plt.xlabel('Actual Values')
         plt.ylabel('Predicted Values')
-        plt.title(f'EBM {param_name} - Overall Performance (R² = {overall_r2:.4f})')
+        plt.title(f'EBM {param_name} - Overall Performance ({phase.capitalize()} Phase, R² = {overall_r2:.4f})')
         plt.grid(True)
         plt.savefig(os.path.join(param_output_dir, 'overall_performance.png'))
         plt.close()
@@ -853,7 +886,8 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
             'successful_rounds': len(results),
             'total_rounds': len(rounds_to_process),
             'sampled': sample is not None,
-            'time_features_added': True # Indicate time features were used
+            'time_features_added': True, # Indicate time features were used
+            'phase': phase # Save phase
         }
 
         # Save summary
@@ -861,7 +895,7 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
             json.dump(summary, f, indent=4)
 
         # Print summary
-        print(f"\nSummary for parameter set {param_name}:")
+        print(f"\nSummary for parameter set {param_name} (Phase: {phase}):")
         print(f"  Overall MAE: {overall_mae:.4f}")
         print(f"  Overall RMSE: {overall_rmse:.4f}")
         print(f"  Overall R²: {overall_r2:.4f}")
@@ -876,7 +910,7 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
 
     # Find the best parameter set based on R²
     if not ebm_evaluation_results:
-        raise ValueError("No successful parameter sets found")
+        raise ValueError(f"No successful parameter sets found for phase '{phase}'")
 
     best_param_set = None
     best_r2 = -float('inf')
@@ -897,7 +931,8 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
         'metrics': {},
         'sampled': sample is not None,
         'sample_size': len(rounds_to_process) if sample is not None else None,
-        'time_features_added': True # Indicate time features were used
+        'time_features_added': True, # Indicate time features were used
+        'phase': phase # Save phase
     }
 
     for param_name, eval_result in ebm_evaluation_results.items():
@@ -909,7 +944,7 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
         }
 
     # Save comparison
-    with open(os.path.join(output_dir, f"{target}_ind_{target_index}_ebm_comparison.json"), 'w') as f:
+    with open(os.path.join(output_dir, f"{target}_ind_{target_index}_ebm_comparison_{phase}.json"), 'w') as f:
         json.dump(comparison, f, indent=4)
 
     # Create comparison bar chart
@@ -923,7 +958,7 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
     plt.xlabel('EBM Parameter Set')
     plt.ylabel('Overall R²')
     sampling_info = f" (Sampled {len(rounds_to_process)} rounds)" if sample is not None else ""
-    plt.title(f'Comparison of EBM Parameter Sets for {target}, index {target_index}{sampling_info} (with Time Features)')
+    plt.title(f'Comparison of EBM Parameter Sets for {target}, index {target_index} ({phase.capitalize()} Phase){sampling_info} (with Time Features)')
 
     # Add value labels
     for bar in bars:
@@ -933,11 +968,11 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
 
     plt.grid(axis='y')
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f"{target}_ind_{target_index}_ebm_comparison.png"))
+    plt.savefig(os.path.join(output_dir, f"{target}_ind_{target_index}_ebm_comparison_{phase}.png"))
     plt.close()
 
     print(f"\n{'='*80}")
-    print(f"Best EBM parameter set: {best_param_set} with R² = {best_r2:.4f}")
+    print(f"Best EBM parameter set for phase '{phase}': {best_param_set} with R² = {best_r2:.4f}")
     print(f"{'='*80}")
 
     # Return the best parameter set and all results
@@ -956,9 +991,9 @@ def evaluate_ebm_parameter_sets(target, start_round=0, end_round=None, step=1,
 def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=None, step=1,
                            xgb_parameter_sets=None, output_dir=None, models_dir=None,
                            best_ebm_param_name=None, organized_dir="./src/data/csv", target_index=0,
-                           parallel=True, max_workers=None, sample=None):
+                           parallel=True, max_workers=None, sample=None, phase="validation"):
     """
-    Evaluate different XGBoost parameter sets for the residuals model using saved EBM models.
+    Evaluate different XGBoost parameter sets for the residuals model using saved EBM models for a specific phase.
     Uses data with added time features.
 
     Args:
@@ -976,6 +1011,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
         parallel: Whether to use parallel processing
         max_workers: Maximum number of parallel workers (None = auto)
         sample: If specified, sample this many rounds evenly instead of using all rounds
+        phase: Either "validation" or "test" to specify which phase's data to use
 
     Returns:
         Dictionary with the best stacked model configuration and evaluation results
@@ -993,15 +1029,15 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
     # Get timestamp for this evaluation if output_dir not provided
     if output_dir is None:
         timestamp = time.strftime("%Y%m%d-%H%M%S")
-        # Add _timefeat to directory name
-        output_dir = f"./results/stacked_optimization_timefeat/{timestamp}"
+        # Add _timefeat and phase to directory name
+        output_dir = f"./results/stacked_optimization_timefeat/{timestamp}_{phase}"
 
-    # Create subdirectory for XGBoost evaluation
-    xgb_output_dir = os.path.join(output_dir, 'xgboost_eval')
+    # Create subdirectory for XGBoost evaluation, including phase
+    xgb_output_dir = os.path.join(output_dir, f'xgboost_eval_{phase}')
     os.makedirs(xgb_output_dir, exist_ok=True)
 
-    # Get total number of rounds
-    total_rounds = get_cv_round_count(target_dir)
+    # Get total number of rounds for the specified phase
+    total_rounds = get_cv_round_count(target_dir, phase=phase)
 
     # Set default end_round if not provided
     if end_round is None:
@@ -1012,12 +1048,12 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
     # Get list of rounds to process
     if sample is not None:
         rounds_to_process = sample_rounds_evenly(start_round, end_round, sample)
-        print(f"Sampling {len(rounds_to_process)} rounds evenly from {start_round} to {end_round-1}")
+        print(f"Sampling {len(rounds_to_process)} rounds evenly from {start_round} to {end_round-1} for phase '{phase}'")
     else:
         rounds_to_process = list(range(start_round, end_round, step))
 
     print(f"\n{'='*80}")
-    print(f"Evaluating stacked models for target: {target}, index: {target_index} (with time features)")
+    print(f"Evaluating stacked models for target: {target}, index: {target_index} (Phase: {phase}, with time features)")
     print(f"Using EBM parameters: {best_ebm_params}")
     print(f"Using saved EBM models when available to speed up optimization")
     print(f"{'='*80}")
@@ -1028,12 +1064,12 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
     # Try each XGBoost parameter set
     for param_name, xgb_params in xgb_parameter_sets.items():
         print(f"\n{'='*80}")
-        print(f"Evaluating XGBoost parameter set: {param_name}")
+        print(f"Evaluating XGBoost parameter set: {param_name} (Phase: {phase})")
         print(f"Parameters: {xgb_params}")
         print(f"{'='*80}")
 
-        # Create directory for this parameter set
-        param_output_dir = os.path.join(xgb_output_dir, f"{target}_ind_{target_index}_{param_name}")
+        # Create directory for this parameter set, including phase
+        param_output_dir = os.path.join(xgb_output_dir, f"{target}_ind_{target_index}_{param_name}_{phase}")
         os.makedirs(param_output_dir, exist_ok=True)
 
         # Save configuration
@@ -1047,7 +1083,8 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
             'rounds': rounds_to_process,
             'sampled': sample is not None,
             'sample_size': len(rounds_to_process) if sample is not None else None,
-            'time_features_added': True # Indicate time features were used
+            'time_features_added': True, # Indicate time features were used
+            'phase': phase # Save phase
         }
 
         with open(os.path.join(param_output_dir, 'config.json'), 'w') as f:
@@ -1059,7 +1096,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
             if max_workers is None:
                 max_workers = min(multiprocessing.cpu_count(), len(rounds_to_process))
 
-            print(f"Running with {max_workers} parallel workers")
+            print(f"Running with {max_workers} parallel workers for phase '{phase}'")
 
             # Create a partial function with fixed arguments
             process_func = partial(
@@ -1071,7 +1108,8 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
                 ebm_params=best_ebm_params,
                 xgb_params=xgb_params,
                 models_dir=models_dir,
-                best_ebm_param_name=best_ebm_param_name
+                best_ebm_param_name=best_ebm_param_name,
+                phase=phase # Pass phase
             )
 
             # Run in parallel
@@ -1095,7 +1133,8 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
                     best_ebm_params,
                     xgb_params,
                     models_dir=models_dir,
-                    best_ebm_param_name=best_ebm_param_name
+                    best_ebm_param_name=best_ebm_param_name,
+                    phase=phase # Pass phase
                 )
 
                 if result is not None:
@@ -1103,7 +1142,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
 
         # Process the results
         if not results:
-            print(f"No successful rounds for parameter set {param_name}")
+            print(f"No successful rounds for parameter set {param_name} in phase '{phase}'")
             continue
 
         # Extract metrics
@@ -1154,7 +1193,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
                  plt.plot([min_val, max_val], [min_val, max_val], 'r--')
         plt.xlabel('Actual Values')
         plt.ylabel('Predicted Values')
-        plt.title(f'Stacked Model Performance (R² = {overall_r2:.4f})')
+        plt.title(f'Stacked Model Performance ({phase.capitalize()} Phase, R² = {overall_r2:.4f})')
         plt.grid(True)
 
         # Plot 2: EBM Only Performance
@@ -1168,7 +1207,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
                  plt.plot([min_val, max_val], [min_val, max_val], 'r--')
         plt.xlabel('Actual Values')
         plt.ylabel('Predicted Values')
-        plt.title(f'EBM Only Performance (R² = {overall_ebm_r2:.4f})')
+        plt.title(f'EBM Only Performance ({phase.capitalize()} Phase, R² = {overall_ebm_r2:.4f})')
         plt.grid(True)
 
         # Plot 3: Improvement in R² Across Rounds
@@ -1179,7 +1218,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
         plt.axhline(y=overall_r2_improvement, color='r', linestyle='-', label=f'Avg: {overall_r2_improvement:.2f}%')
         plt.xlabel('Round Number')
         plt.ylabel('R² Improvement (%)')
-        plt.title('R² Improvement by Round')
+        plt.title(f'R² Improvement by Round ({phase.capitalize()} Phase)')
         plt.legend()
         plt.grid(True, axis='y')
 
@@ -1190,7 +1229,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
         plt.axhline(y=overall_mae_improvement, color='r', linestyle='-', label=f'Avg: {overall_mae_improvement:.2f}%')
         plt.xlabel('Round Number')
         plt.ylabel('MAE Improvement (%)')
-        plt.title('MAE Improvement by Round')
+        plt.title(f'MAE Improvement by Round ({phase.capitalize()} Phase)')
         plt.legend()
         plt.grid(True, axis='y')
 
@@ -1233,7 +1272,8 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
             'total_rounds': len(rounds_to_process),
             'sampled': sample is not None,
             'sample_size': len(rounds_to_process) if sample is not None else None,
-            'time_features_added': True # Indicate time features were used
+            'time_features_added': True, # Indicate time features were used
+            'phase': phase # Save phase
         }
 
         # Save summary
@@ -1241,7 +1281,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
             json.dump(summary, f, indent=4)
 
         # Print summary
-        print(f"\nSummary for XGBoost parameter set {param_name}:")
+        print(f"\nSummary for XGBoost parameter set {param_name} (Phase: {phase}):")
         print(f"  Overall Stacked Model MAE: {overall_mae:.4f}")
         print(f"  Overall Stacked Model R²: {overall_r2:.4f}")
         print(f"  Overall EBM Only R²: {overall_ebm_r2:.4f}")
@@ -1257,7 +1297,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
 
     # Find the best parameter set based on R² improvement
     if not xgb_evaluation_results:
-        raise ValueError("No successful XGBoost parameter sets found")
+        raise ValueError(f"No successful XGBoost parameter sets found for phase '{phase}'")
 
     best_param_set = None
     best_r2_improvement = -float('inf')
@@ -1278,7 +1318,8 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
         'metrics': {},
         'sampled': sample is not None,
         'sample_size': len(rounds_to_process) if sample is not None else None,
-        'time_features_added': True # Indicate time features were used
+        'time_features_added': True, # Indicate time features were used
+        'phase': phase # Save phase
     }
 
     for param_name, eval_result in xgb_evaluation_results.items():
@@ -1291,7 +1332,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
         }
 
     # Save comparison
-    with open(os.path.join(xgb_output_dir, f"{target}_ind_{target_index}_xgb_comparison.json"), 'w') as f:
+    with open(os.path.join(xgb_output_dir, f"{target}_ind_{target_index}_xgb_comparison_{phase}.json"), 'w') as f:
         json.dump(comparison, f, indent=4)
 
     # Create comparison bar chart
@@ -1304,7 +1345,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
     plt.xlabel('XGBoost Parameter Set')
     plt.ylabel('R² Improvement (%)')
     sampling_info = f" (Sampled {len(rounds_to_process)} rounds)" if sample is not None else ""
-    plt.title(f'Comparison of XGBoost Parameter Sets for {target}, index {target_index}{sampling_info} (with Time Features)')
+    plt.title(f'Comparison of XGBoost Parameter Sets for {target}, index {target_index} ({phase.capitalize()} Phase){sampling_info} (with Time Features)')
 
     # Add value labels
     for bar in bars:
@@ -1314,28 +1355,32 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
 
     plt.grid(axis='y')
     plt.tight_layout()
-    plt.savefig(os.path.join(xgb_output_dir, f"{target}_ind_{target_index}_xgb_comparison.png"))
+    plt.savefig(os.path.join(xgb_output_dir, f"{target}_ind_{target_index}_xgb_comparison_{phase}.png"))
     plt.close()
 
     print(f"\n{'='*80}")
-    print(f"Best XGBoost parameter set: {best_param_set} with R² improvement = {best_r2_improvement:.2f}%")
+    print(f"Best XGBoost parameter set for phase '{phase}': {best_param_set} with R² improvement = {best_r2_improvement:.2f}%")
     print(f"{'='*80}")
 
     # After finding the best XGBoost parameter set
     # Delete all EBM models except the ones used by the best parameter set
     if models_dir is not None and best_ebm_param_name is not None:
-        print(f"\nCleaning up saved EBM models, keeping only the best ones...")
+        print(f"\nCleaning up saved EBM models for phase '{phase}', keeping only the best ones...")
         model_files = os.listdir(models_dir)
+        # Include phase in the pattern
         best_model_pattern = f"{target}_ind_{target_index}_{best_ebm_param_name}_round_"
 
         for model_file in model_files:
-            if not model_file.startswith(best_model_pattern):
-                model_path = os.path.join(models_dir, model_file)
-                try:
-                    os.remove(model_path)
-                    print(f"  Deleted {model_file}")
-                except Exception as e:
-                    print(f"  Error deleting {model_file}: {str(e)}")
+            # Check if the file belongs to the current phase and target/index
+            if model_file.startswith(f"{target}_ind_{target_index}_") and model_file.endswith(f"_{phase}.joblib"):
+                # Keep only if it matches the best EBM param name
+                if not model_file.startswith(best_model_pattern):
+                    model_path = os.path.join(models_dir, model_file)
+                    try:
+                        os.remove(model_path)
+                        print(f"  Deleted {model_file}")
+                    except Exception as e:
+                        print(f"  Error deleting {model_file}: {str(e)}")
 
     # Save the best model parameters (not actual models since each round has its own)
     best_model_params = {
@@ -1343,10 +1388,11 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
         'xgb_params': xgb_evaluation_results[best_param_set]['xgb_params'],
         'target': target,
         'target_index': target_index,
-        'time_features_added': True # Indicate time features were used
+        'time_features_added': True, # Indicate time features were used
+        'phase': phase # Save phase
     }
 
-    with open(os.path.join(xgb_output_dir, f"{target}_ind_{target_index}_best_model_params.json"), 'w') as f:
+    with open(os.path.join(xgb_output_dir, f"{target}_ind_{target_index}_best_model_params_{phase}.json"), 'w') as f:
         json.dump(best_model_params, f, indent=4)
 
     # Final overall summary
@@ -1361,11 +1407,12 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
         'timestamp': time.strftime("%Y%m%d-%H%M%S"),
         'sampled': sample is not None,
         'sample_size': len(rounds_to_process) if sample is not None else None,
-        'time_features_added': True # Indicate time features were used
+        'time_features_added': True, # Indicate time features were used
+        'phase': phase # Save phase
     }
 
     # Save final summary
-    with open(os.path.join(output_dir, f"{target}_ind_{target_index}_final_summary.json"), 'w') as f:
+    with open(os.path.join(output_dir, f"{target}_ind_{target_index}_final_summary_{phase}.json"), 'w') as f:
         json.dump(final_summary, f, indent=4)
 
     # Create final comparison plot
@@ -1379,7 +1426,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
     plt.axhline(y=0, color='r', linestyle='-', alpha=0.3)
     plt.ylabel('R²')
     sampling_info = f" (Sampled {len(rounds_to_process)} rounds)" if sample is not None else ""
-    plt.title(f'Performance Comparison for {target}, index {target_index}{sampling_info} (with Time Features)')
+    plt.title(f'Performance Comparison for {target}, index {target_index} ({phase.capitalize()} Phase){sampling_info} (with Time Features)')
 
     # Add value labels
     for bar in bars:
@@ -1393,7 +1440,7 @@ def evaluate_stacked_model(target, best_ebm_params, start_round=0, end_round=Non
 
     plt.grid(axis='y')
     plt.tight_layout(rect=[0, 0.05, 1, 1])  # Make room for the improvement text
-    plt.savefig(os.path.join(output_dir, f"{target}_ind_{target_index}_final_comparison.png"))
+    plt.savefig(os.path.join(output_dir, f"{target}_ind_{target_index}_final_comparison_{phase}.png"))
     plt.close()
 
     return {
@@ -1412,9 +1459,9 @@ def optimize_stacked_model(target, start_round=0, end_round=None, step=1,
                            ebm_parameter_sets=None, xgb_parameter_sets=None,
                            organized_dir="./src/data/csv", target_index=0,
                            parallel=True, max_workers=None, sample=None,
-                           only_optimize_xgb=False, optimal_ebm_param_name=None):
+                           only_optimize_xgb=False, optimal_ebm_param_name=None, phase="validation"):
     """
-    Optimize a stacked EBM+XGBoost model for a target using data with time features.
+    Optimize a stacked EBM+XGBoost model for a target using data with time features for a specific phase.
     First finds the best EBM model, then the best XGBoost model for the residuals.
     Uses model saving to speed up optimization.
 
@@ -1432,18 +1479,19 @@ def optimize_stacked_model(target, start_round=0, end_round=None, step=1,
         sample: If specified, sample this many rounds evenly instead of using all rounds
         only_optimize_xgb: If True, skip EBM optimization and use provided optimal_ebm_param_name
         optimal_ebm_param_name: Name of the optimal EBM parameter set to use if only_optimize_xgb is True
+        phase: Either "validation" or "test" to specify which phase's data to use
 
     Returns:
         Dictionary with the optimized model configuration and evaluation results
     """
     # Create timestamp for this optimization run
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    # Add _timefeat to directory name
-    output_dir = f"./results/stacked_optimization_timefeat/{timestamp}"
+    # Add _timefeat and phase to directory name
+    output_dir = f"./results/stacked_optimization_timefeat/{timestamp}_{phase}"
 
     # Step 1: Find the best EBM model
     print(f"\n{'='*80}")
-    print(f"Step 1: Finding the best EBM model for target: {target}, index: {target_index} (with time features)")
+    print(f"Step 1: Finding the best EBM model for target: {target}, index: {target_index} (Phase: {phase}, with time features)")
     sampling_info = f" (Sampling {sample} rounds)" if sample is not None else ""
     print(f"Rounds: {start_round} to {end_round if end_round is not None else 'all'}{sampling_info}")
     print(f"{'='*80}")
@@ -1460,7 +1508,8 @@ def optimize_stacked_model(target, start_round=0, end_round=None, step=1,
             target_index=target_index,
             parallel=parallel,
             max_workers=max_workers,
-            sample=sample
+            sample=sample,
+            phase=phase # Pass phase
         )
         best_ebm_name = ebm_results['best_parameter_set']
         best_ebm_params = ebm_results['best_params']
@@ -1472,15 +1521,15 @@ def optimize_stacked_model(target, start_round=0, end_round=None, step=1,
 
         best_ebm_name = optimal_ebm_param_name
         best_ebm_params = ebm_parameter_sets[best_ebm_name]
-        print(f"Using specified optimal EBM parameter set: {best_ebm_name}")
+        print(f"Using specified optimal EBM parameter set: {best_ebm_name} for phase '{phase}'")
 
-        # Create a models directory if one doesn't exist yet
-        models_dir = os.path.join(output_dir, "saved_ebm_models")
+        # Create a models directory if one doesn't exist yet, including phase
+        models_dir = os.path.join(output_dir, f"saved_ebm_models_{phase}")
         os.makedirs(models_dir, exist_ok=True)
 
     # Step 2: Find the best XGBoost model for the residuals
     print(f"\n{'='*80}")
-    print(f"Step 2: Finding the best XGBoost model for the residuals (with time features)")
+    print(f"Step 2: Finding the best XGBoost model for the residuals (Phase: {phase}, with time features)")
     print(f"Using best EBM model parameters: {best_ebm_name}")
     print(f"{'='*80}")
 
@@ -1498,7 +1547,8 @@ def optimize_stacked_model(target, start_round=0, end_round=None, step=1,
         target_index=target_index,
         parallel=parallel,
         max_workers=max_workers,
-        sample=sample
+        sample=sample,
+        phase=phase # Pass phase
     )
 
     # Combine results
@@ -1515,15 +1565,16 @@ def optimize_stacked_model(target, start_round=0, end_round=None, step=1,
         'timestamp': timestamp,
         'sampled': sample is not None,
         'sample_size': stacked_results.get('sample_size'),
-        'time_features_added': True # Indicate time features were used
+        'time_features_added': True, # Indicate time features were used
+        'phase': phase # Save phase
     }
 
     # Save the final optimization results
-    with open(os.path.join(output_dir, f"{target}_ind_{target_index}_optimization_results.json"), 'w') as f:
+    with open(os.path.join(output_dir, f"{target}_ind_{target_index}_optimization_results_{phase}.json"), 'w') as f:
         json.dump(optimization_results, f, indent=4)
 
     print(f"\n{'='*80}")
-    print(f"Optimization complete for target: {target}, index: {target_index} (with time features)")
+    print(f"Optimization complete for target: {target}, index: {target_index} (Phase: {phase}, with time features)")
     print(f"Best EBM model: {best_ebm_name}")
     print(f"EBM Only R²: {stacked_results['ebm_only_r2']:.4f}")
     print(f"Stacked Model R²: {stacked_results['stacked_r2']:.4f}")
@@ -1535,9 +1586,9 @@ def optimize_stacked_model(target, start_round=0, end_round=None, step=1,
 
 def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0, end_round=None, step=1,
                                   output_dir=None, organized_dir="./src/data/csv", target_index=0,
-                                  parallel=True, max_workers=None, sample=None):
+                                  parallel=True, max_workers=None, sample=None, phase="validation"):
     """
-    Run the stacked model with specified parameters on all rounds using data with time features.
+    Run the stacked model with specified parameters on all rounds using data with time features for a specific phase.
     Each round gets its own independently trained models.
 
     Args:
@@ -1553,6 +1604,7 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
         parallel: Whether to use parallel processing
         max_workers: Maximum number of parallel workers (None = auto)
         sample: If specified, sample this many rounds evenly instead of using all rounds
+        phase: Either "validation" or "test" to specify which phase's data to use
 
     Returns:
         Dictionary with results summary
@@ -1568,19 +1620,19 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
     # Get timestamp for this run
     timestamp = time.strftime("%Y%m%d-%H%M%S")
 
-    # Create output directory
+    # Create output directory, including phase
     if output_dir is None:
-        # Add _timefeat to directory name
-        output_dir = f"./results/stacked_timefeat/{timestamp}"
+        # Add _timefeat and phase to directory name
+        output_dir = f"./results/stacked_timefeat/{timestamp}_{phase}"
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # Create subdirectory for this target and index
-    target_output_dir = os.path.join(output_dir, f"{target}_ind_{target_index}")
+    # Create subdirectory for this target and index, including phase
+    target_output_dir = os.path.join(output_dir, f"{target}_ind_{target_index}_{phase}")
     os.makedirs(target_output_dir, exist_ok=True)
 
-    # Get total number of rounds
-    total_rounds = get_cv_round_count(target_dir)
+    # Get total number of rounds for the specified phase
+    total_rounds = get_cv_round_count(target_dir, phase=phase)
 
     # Set default end_round if not provided
     if end_round is None:
@@ -1591,7 +1643,7 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
     # Get list of rounds to process
     if sample is not None:
         rounds_to_process = sample_rounds_evenly(start_round, end_round, sample)
-        print(f"Sampling {len(rounds_to_process)} rounds evenly from {start_round} to {end_round-1}")
+        print(f"Sampling {len(rounds_to_process)} rounds evenly from {start_round} to {end_round-1} for phase '{phase}'")
     else:
         rounds_to_process = list(range(start_round, end_round, step))
 
@@ -1608,14 +1660,15 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
         'rounds_processed': rounds_to_process,
         'sampled': sample is not None,
         'sample_size': len(rounds_to_process) if sample is not None else None,
-        'time_features_added': True # Indicate time features were used
+        'time_features_added': True, # Indicate time features were used
+        'phase': phase # Save phase
     }
 
     with open(os.path.join(target_output_dir, 'config.json'), 'w') as f:
         json.dump(config, f, indent=4)
 
     print(f"\n{'='*80}")
-    print(f"Running stacked model for target: {target}, index: {target_index} (with time features)")
+    print(f"Running stacked model for target: {target}, index: {target_index} (Phase: {phase}, with time features)")
     sampling_info = f" (Sampled {len(rounds_to_process)} rounds)" if sample is not None else ""
     print(f"Rounds: {start_round} to {end_round-1} with step {step}{sampling_info}")
     print(f"Total rounds to process: {len(rounds_to_process)}")
@@ -1627,7 +1680,7 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
         if max_workers is None:
             max_workers = min(multiprocessing.cpu_count(), len(rounds_to_process))
 
-        print(f"Running with {max_workers} parallel workers")
+        print(f"Running with {max_workers} parallel workers for phase '{phase}'")
 
         # Create a partial function with fixed arguments
         process_func = partial(
@@ -1637,7 +1690,8 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
             x_files_dir=x_files_dir,
             target_index=target_index,
             ebm_params=ebm_params,
-            xgb_params=xgb_params
+            xgb_params=xgb_params,
+            phase=phase # Pass phase
         )
 
         # Run in parallel
@@ -1659,7 +1713,8 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
                 x_files_dir,
                 target_index,
                 ebm_params,
-                xgb_params
+                xgb_params,
+                phase=phase # Pass phase
             )
 
             if result is not None:
@@ -1667,11 +1722,12 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
 
     # Check if we have any successful rounds
     if not results:
-        print(f"No successful rounds for target {target}, index {target_index}")
+        print(f"No successful rounds for target {target}, index {target_index}, phase {phase}")
         return {
             'error': 'No successful rounds',
             'target': target,
-            'target_index': target_index
+            'target_index': target_index,
+            'phase': phase
         }
 
     # Save individual round results
@@ -1690,7 +1746,7 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
         plt.plot(pred_df_sorted['timestamp'], pred_df_sorted['actual'], 'b-', label='Actual', alpha=0.7)
         plt.plot(pred_df_sorted['timestamp'], pred_df_sorted['predicted'], 'r--', label='Stacked Model', alpha=0.7)
         plt.plot(pred_df_sorted['timestamp'], pred_df_sorted['ebm_pred'], 'g-.', label='EBM Only', alpha=0.5)
-        plt.title(f'Round {round_num} - Actual vs Predictions')
+        plt.title(f'Round {round_num} ({phase.capitalize()}) - Actual vs Predictions')
         plt.ylabel('Value')
         plt.legend()
         plt.xticks(rotation=45)
@@ -1710,7 +1766,7 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
                 plt.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.5)
         plt.xlabel('Actual')
         plt.ylabel('Predicted')
-        plt.title(f'Round {round_num} - Correlation')
+        plt.title(f'Round {round_num} ({phase.capitalize()}) - Correlation')
         plt.legend()
         plt.grid(True)
 
@@ -1748,14 +1804,14 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
     plt.scatter(overall_actual, overall_predicted, alpha=0.5)
     # Add perfect prediction line only if data exists and is valid
     if len(overall_actual) > 0 and pd.notna(overall_actual.min()) and pd.notna(overall_predicted.min()):
-         min_val = min(overall_actual.min(), overall_predicted.min())
-         max_val = max(overall_actual.max(), overall_predicted.max())
-         if pd.notna(min_val) and pd.notna(max_val):
-             plt.plot([min_val, max_val], [min_val, max_val], 'r--')
+        min_val = min(overall_actual.min(), overall_predicted.min())
+        max_val = max(overall_actual.max(), overall_predicted.max())
+        if pd.notna(min_val) and pd.notna(max_val):
+            plt.plot([min_val, max_val], [min_val, max_val], 'r--')
     plt.xlabel('Actual Values')
     plt.ylabel('Predicted Values')
     sampling_info = f" (Sampled {len(rounds_to_process)} rounds)" if sample is not None else ""
-    plt.title(f'Stacked Model Performance (R² = {overall_r2:.4f}){sampling_info} (with Time Features)')
+    plt.title(f'Stacked Model Performance ({phase.capitalize()} Phase, R² = {overall_r2:.4f}){sampling_info} (with Time Features)')
     plt.grid(True)
 
     # Plot 2: EBM Only Performance
@@ -1763,13 +1819,13 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
     plt.scatter(overall_actual, overall_ebm_pred, alpha=0.5)
     # Add perfect prediction line only if data exists and is valid
     if len(overall_actual) > 0 and pd.notna(overall_actual.min()) and pd.notna(overall_ebm_pred.min()):
-         min_val = min(overall_actual.min(), overall_ebm_pred.min())
-         max_val = max(overall_actual.max(), overall_ebm_pred.max())
-         if pd.notna(min_val) and pd.notna(max_val):
-             plt.plot([min_val, max_val], [min_val, max_val], 'r--')
+        min_val = min(overall_actual.min(), overall_ebm_pred.min())
+        max_val = max(overall_actual.max(), overall_ebm_pred.max())
+        if pd.notna(min_val) and pd.notna(max_val):
+            plt.plot([min_val, max_val], [min_val, max_val], 'r--')
     plt.xlabel('Actual Values')
     plt.ylabel('Predicted Values')
-    plt.title(f'EBM Only Performance (R² = {overall_ebm_r2:.4f})')
+    plt.title(f'EBM Only Performance ({phase.capitalize()} Phase, R² = {overall_ebm_r2:.4f})')
     plt.grid(True)
 
     # Plot 3: Improvement in R² Across Rounds
@@ -1780,7 +1836,7 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
     plt.axhline(y=overall_r2_improvement, color='r', linestyle='-', label=f'Avg: {overall_r2_improvement:.2f}%')
     plt.xlabel('Round Number')
     plt.ylabel('R² Improvement (%)')
-    plt.title('R² Improvement by Round')
+    plt.title(f'R² Improvement by Round ({phase.capitalize()} Phase)')
     plt.legend()
     plt.grid(True, axis='y')
 
@@ -1792,7 +1848,7 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
     plt.ylim(min(0, min(r2_values) - 0.05), max(1, max(r2_values) + 0.05))
     plt.axhline(y=0, color='r', linestyle='-', alpha=0.3)
     plt.ylabel('R²')
-    plt.title('Performance Comparison')
+    plt.title(f'Performance Comparison ({phase.capitalize()} Phase)')
 
     # Add value labels
     for bar in bars:
@@ -1828,7 +1884,7 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
     plt.axhline(y=overall_ebm_mae, color='green', linestyle='-', label=f'EBM Avg: {overall_ebm_mae:.4f}')
     plt.xlabel('Round Number')
     plt.ylabel('MAE')
-    plt.title('MAE by Round')
+    plt.title(f'MAE by Round ({phase.capitalize()} Phase)')
     plt.legend()
     plt.grid(True, axis='y')
 
@@ -1840,7 +1896,7 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
     plt.axhline(y=overall_ebm_r2, color='green', linestyle='-', label=f'EBM Avg: {overall_ebm_r2:.4f}')
     plt.xlabel('Round Number')
     plt.ylabel('R²')
-    plt.title('R² by Round')
+    plt.title(f'R² by Round ({phase.capitalize()} Phase)')
     plt.legend()
     plt.grid(True, axis='y')
 
@@ -1850,7 +1906,7 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
     plt.axhline(y=overall_mae_improvement, color='r', linestyle='-', label=f'Avg: {overall_mae_improvement:.2f}%')
     plt.xlabel('Round Number')
     plt.ylabel('MAE Improvement (%)')
-    plt.title('MAE Improvement by Round')
+    plt.title(f'MAE Improvement by Round ({phase.capitalize()} Phase)')
     plt.legend()
     plt.grid(True, axis='y')
 
@@ -1860,7 +1916,7 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
     plt.axhline(y=overall_r2_improvement, color='r', linestyle='-', label=f'Avg: {overall_r2_improvement:.2f}%')
     plt.xlabel('Round Number')
     plt.ylabel('R² Improvement (%)')
-    plt.title('R² Improvement by Round')
+    plt.title(f'R² Improvement by Round ({phase.capitalize()} Phase)')
     plt.legend()
     plt.grid(True, axis='y')
 
@@ -1898,7 +1954,8 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
         'timestamp': timestamp,
         'sampled': sample is not None,
         'sample_size': len(rounds_to_process) if sample is not None else None,
-        'time_features_added': True # Indicate time features were used
+        'time_features_added': True, # Indicate time features were used
+        'phase': phase # Save phase
     }
 
     # Save summary
@@ -1911,14 +1968,15 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
         'xgb_params': xgb_params,
         'target': target,
         'target_index': target_index,
-        'time_features_added': True # Indicate time features were used
+        'time_features_added': True, # Indicate time features were used
+        'phase': phase # Save phase
     }
 
     with open(os.path.join(target_output_dir, 'model_params.json'), 'w') as f:
         json.dump(model_params, f, indent=4)
 
     # Print summary
-    print("\nStacked Model Results Summary (with time features):")
+    print(f"\nStacked Model Results Summary (Phase: {phase}, with time features):")
     print(f"Target: {target}, Index: {target_index}")
     sampling_info = f" (Sampled {len(rounds_to_process)} rounds)" if sample is not None else ""
     print(f"Processed {summary['successful_rounds']} of {summary['total_rounds_attempted']} rounds successfully{sampling_info}")
@@ -1947,7 +2005,7 @@ def main():
                         help='Step size for processing rounds (default: 1)')
 
     parser.add_argument('--output', type=str, default=None,
-                        help='Base directory to save results (default: ./results/stacked_timefeat/DATE or ./results/stacked_optimization_timefeat/DATE)')
+                        help='Base directory to save results (default: ./results/stacked_timefeat/DATE_PHASE or ./results/stacked_optimization_timefeat/DATE_PHASE)')
 
     parser.add_argument('--organized-dir', type=str, default='./src/data/csv',
                         help='Base directory for organized files (default: ./src/data/csv)')
@@ -1979,17 +2037,20 @@ def main():
     parser.add_argument('--optimal_ebm_params', type=str, default=None,
                         help='Name of optimal EBM parameter set to use instead of optimizing (used with --optimize)')
 
+    parser.add_argument('--phase', type=str, default='validation', choices=['validation', 'test'],
+                        help='Phase to use for cross-validation (validation or test) (default: validation)')
+
     args = parser.parse_args()
 
-    # Get available targets
-    available_targets = get_available_targets(args.organized_dir)
+    # Get available targets for the specified phase
+    available_targets = get_available_targets(args.organized_dir, phase=args.phase)
 
     if args.list or not available_targets:
-        print("\nAvailable targets:")
+        print(f"\nAvailable targets for phase '{args.phase}':")
         for target in available_targets:
             target_dir = os.path.join(args.organized_dir, target)
             try:
-                num_rounds = get_cv_round_count(target_dir)
+                num_rounds = get_cv_round_count(target_dir, phase=args.phase)
                 print(f"  {target} ({num_rounds} rounds)")
             except Exception as e:
                 print(f"  {target} (Error: {str(e)})")
@@ -2079,12 +2140,12 @@ def main():
     # Process each target
     for target in target_list:
         if target not in available_targets:
-            print(f"Target '{target}' not found in available targets.")
+            print(f"Target '{target}' not found in available targets for phase '{args.phase}'.")
             continue
 
         try:
             print(f"\n{'='*80}")
-            print(f"Processing target: {target} (with time features)")
+            print(f"Processing target: {target} (Phase: {args.phase}, with time features)")
             print(f"{'='*80}")
 
             # Determine target indices to process
@@ -2101,7 +2162,7 @@ def main():
                             print(f"Error: EBM parameter set '{args.optimal_ebm_params}' not found")
                             continue
 
-                        print(f"Using optimal EBM parameter set: {args.optimal_ebm_params}")
+                        print(f"Using optimal EBM parameter set: {args.optimal_ebm_params} for phase '{args.phase}'")
 
                         optimize_stacked_model(
                             target=target,
@@ -2116,7 +2177,8 @@ def main():
                             max_workers=args.max_workers,
                             sample=args.sample,
                             only_optimize_xgb=True,
-                            optimal_ebm_param_name=args.optimal_ebm_params
+                            optimal_ebm_param_name=args.optimal_ebm_params,
+                            phase=args.phase 
                         )
                     else:
                         optimize_stacked_model(
@@ -2130,7 +2192,8 @@ def main():
                             target_index=target_index,
                             parallel=not args.no_parallel,
                             max_workers=args.max_workers,
-                            sample=args.sample
+                            sample=args.sample,
+                            phase=args.phase 
                         )
                 elif args.run_best:
                     # Run with best previously found parameters
@@ -2141,39 +2204,51 @@ def main():
                     # Load best parameters from file
                     try:
                         with open(args.best_params_file, 'r') as f:
-                            best_params = json.load(f)
+                            best_params_all = json.load(f)
                     except FileNotFoundError:
-                         print(f"Error: Best parameters file not found: {args.best_params_file}")
-                         continue
+                        print(f"Error: Best parameters file not found: {args.best_params_file}")
+                        continue
                     except json.JSONDecodeError:
-                         print(f"Error: Could not decode JSON from {args.best_params_file}")
-                         continue
+                        print(f"Error: Could not decode JSON from {args.best_params_file}")
+                        continue
 
-                    # Check if parameters for this target and index exist
-                    # Try finding parameters saved by optimize_stacked_model first
-                    target_key_opt = f"{target}_ind_{target_index}_optimization_results.json" # Key pattern from optimize
-                    target_key_run = f"{target}_ind_{target_index}" # Key pattern from run_stacked_model_with_params
+                    # Check if parameters for this target, index, and phase exist
+                    target_key_opt = f"{target}_ind_{target_index}_optimization_results_{args.phase}.json"
+                    target_key_run = f"{target}_ind_{target_index}_{args.phase}"
+                    target_key_final_summary = f"{target}_ind_{target_index}_final_summary_{args.phase}.json"
 
                     params_found = False
-                    if target_key_opt in best_params: # Check for optimization output structure
-                        ebm_params = best_params[target_key_opt].get('best_ebm_params')
-                        xgb_params = best_params[target_key_opt].get('best_xgb_params')
+                    ebm_params = None
+                    xgb_params = None
+
+                    # Check multiple possible structures in the JSON file
+                    if target_key_opt in best_params_all:
+                        params = best_params_all[target_key_opt]
+                        ebm_params = params.get('best_ebm_params')
+                        xgb_params = params.get('best_xgb_params')
                         params_found = ebm_params and xgb_params
-                    elif target_key_run in best_params: # Check for direct run output structure
-                        ebm_params = best_params[target_key_run].get('ebm_params')
-                        xgb_params = best_params[target_key_run].get('xgb_params')
+                    elif target_key_run in best_params_all:
+                        params = best_params_all[target_key_run]
+                        ebm_params = params.get('ebm_params')
+                        xgb_params = params.get('xgb_params')
                         params_found = ebm_params and xgb_params
-                    elif 'best_ebm_params' in best_params and 'best_xgb_params' in best_params: # Check simpler structure
-                        ebm_params = best_params['best_ebm_params']
-                        xgb_params = best_params['best_xgb_params']
+                    elif target_key_final_summary in best_params_all:
+                        params = best_params_all[target_key_final_summary]
+                        ebm_params = params.get('best_ebm_params')
+                        xgb_params = params.get('best_xgb_params')
+                        params_found = ebm_params and xgb_params
+                    elif 'best_ebm_params' in best_params_all and 'best_xgb_params' in best_params_all:
+                        # Check simpler structure, assuming it applies to the current phase
+                        ebm_params = best_params_all['best_ebm_params']
+                        xgb_params = best_params_all['best_xgb_params']
                         params_found = True
 
 
                     if not params_found:
-                        print(f"Error: No compatible parameters found for target {target}, index {target_index} in {args.best_params_file}")
+                        print(f"Error: No compatible parameters found for target {target}, index {target_index}, phase {args.phase} in {args.best_params_file}")
                         continue
 
-                    print(f"Running with best parameters from {args.best_params_file} for {target} index {target_index}")
+                    print(f"Running with best parameters from {args.best_params_file} for {target} index {target_index}, phase {args.phase}")
                     print(f"EBM params: {ebm_params}")
                     print(f"XGBoost params: {xgb_params}")
 
@@ -2185,16 +2260,17 @@ def main():
                         start_round=args.start,
                         end_round=args.end,
                         step=args.step,
-                        output_dir=args.output, # Will default to ./results/stacked_timefeat/TIMESTAMP if None
+                        output_dir=args.output, # Will default if None
                         organized_dir=args.organized_dir,
                         target_index=target_index,
                         parallel=not args.no_parallel,
                         max_workers=args.max_workers,
-                        sample=args.sample
+                        sample=args.sample,
+                        phase=args.phase # Pass phase
                     )
                 else:
                     # Run with default parameters (one set each)
-                    print("Using default parameters (no optimization or --run-best specified)")
+                    print(f"Using default parameters for phase '{args.phase}' (no optimization or --run-best specified)")
 
                     # Select default parameter sets
                     ebm_params = ebm_parameter_sets['ebm_default']
@@ -2207,16 +2283,17 @@ def main():
                         start_round=args.start,
                         end_round=args.end,
                         step=args.step,
-                        output_dir=args.output, # Will default to ./results/stacked_timefeat/TIMESTAMP if None
+                        output_dir=args.output, # Will default if None
                         organized_dir=args.organized_dir,
                         target_index=target_index,
                         parallel=not args.no_parallel,
                         max_workers=args.max_workers,
-                        sample=args.sample
+                        sample=args.sample,
+                        phase=args.phase 
                     )
         except Exception as e:
-            print(f"Critical error processing target {target}: {type(e).__name__} - {str(e)}")
-            # Optionally add traceback here for debugging
+            print(f"Critical error processing target {target} for phase {args.phase}: {type(e).__name__} - {str(e)}")
+            # add traceback here for debugging???
             # import traceback
             # traceback.print_exc()
 
