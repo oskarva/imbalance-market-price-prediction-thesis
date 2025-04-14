@@ -19,9 +19,9 @@ def main():
     # --- Date Arguments ---
     parser.add_argument('--start-date', type=str, default="2021-01-01",
                         help='Overall start date for data fetching (YYYY-MM-DD). Default: 2021-01-01')
-    parser.add_argument('--val-start-date', type=str, required=True,
+    parser.add_argument('--val-start-date', type=str, default="2023-12-16",
                         help='Start date defining the validation period (YYYY-MM-DD HH:MM:SS or YYYY-MM-DD). Required.')
-    parser.add_argument('--test-start-date', type=str, required=True,
+    parser.add_argument('--test-start-date', type=str, default="2024-06-16",
                         help='Start date defining the test period (YYYY-MM-DD HH:MM:SS or YYYY-MM-DD). Required.')
     parser.add_argument('--end-date', type=str, default="2025-03-15",
                         help='Overall end date for data fetching; defines end of test period (YYYY-MM-DD HH:MM:SS or YYYY-MM-DD). Required.')
