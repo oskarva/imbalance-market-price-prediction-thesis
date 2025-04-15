@@ -1,0 +1,31 @@
+{
+    "target": "no1",
+    "target_index": 0,
+    "timestamp": "20250415-032423",
+    "best_parameter_set": "ebm_fast",
+    "best_r2": 0.44532549591348125,
+    "metrics": {
+        "ebm_default": {
+            "overall_mae": 12.121678770040427,
+            "overall_rmse": 35.7206979835748,
+            "overall_r2": 0.41911242446894703,
+            "avg_training_time": 324.6382884759903
+        },
+        "ebm_fast": {
+            "overall_mae": 7.257953119472096,
+            "overall_rmse": 34.905430167225994,
+            "overall_r2": 0.44532549591348125,
+            "avg_training_time": 19.169363703727722
+        },
+        "ebm_robust": {
+            "overall_mae": 11.455938531504566,
+            "overall_rmse": 35.214600427669495,
+            "overall_r2": 0.43545606699719275,
+            "avg_training_time": 516.1183739013671
+        }
+    },
+    "sampled": true,
+    "sample_size": 250,
+    "time_features_added": true,
+    "phase": "validation"
+}

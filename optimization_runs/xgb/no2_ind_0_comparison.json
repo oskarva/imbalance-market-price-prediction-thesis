@@ -1,0 +1,43 @@
+{
+    "target": "no2",
+    "target_index": 0,
+    "phase": "validation",
+    "timestamp": "20250414-024121",
+    "parameter_sets": [
+        "set1_robust",
+        "set2_regularized",
+        "set3_outlier_robust",
+        "set4_extreme_events",
+        "set5_ensemble_diverse"
+    ],
+    "metrics": {
+        "set1_robust": {
+            "overall_r2": 0.792137382143689,
+            "overall_mae": 4.685157890937157,
+            "overall_rmse": 12.357265397232982
+        },
+        "set2_regularized": {
+            "overall_r2": 0.6381252358934022,
+            "overall_mae": 6.7813349839880335,
+            "overall_rmse": 16.30471931444544
+        },
+        "set3_outlier_robust": {
+            "overall_r2": -2.9200543259882736,
+            "overall_mae": 22.324625842394926,
+            "overall_rmse": 53.6636515182955
+        },
+        "set4_extreme_events": {
+            "overall_r2": 0.7574054479806824,
+            "overall_mae": 5.732068239626687,
+            "overall_rmse": 13.349798164646877
+        },
+        "set5_ensemble_diverse": {
+            "overall_r2": 0.6906824676000587,
+            "overall_mae": 7.336950030972337,
+            "overall_rmse": 15.074275432432565
+        }
+    },
+    "time_features_added": true,
+    "best_parameter_set": "set1_robust",
+    "best_r2": 0.792137382143689
+}
