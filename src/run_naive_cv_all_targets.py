@@ -8,27 +8,27 @@ from pathlib import Path
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
 
-def get_available_targets(organized_dir="./src/data/csv", areas=["no1", "no2", "no3", "no4", "no5"]):
+def get_available_targets(organized_dir="./src/data/csv", areas=["no1", "no2", "no3", "no4", "no5"], phase="validation"):
     """
-    Get list of available targets from the organized directory structure.
-    
+    Get list of available targets from the organized directory structure for the specified phase.
+
     Args:
         organized_dir: Base directory for organized files
         areas: List of area directories to check
-        
+        phase: Either "validation" or "test" to specify which phase's data to check
+
     Returns:
         List of available targets (directory names)
     """
     targets = []
-    
-    # Look for subdirectories that match the specified areas
     for item in os.listdir(organized_dir):
         if item in areas:
-            targets.append(item)
-    
+            phase_dir = os.path.join(organized_dir, item, f"{phase}_rounds")
+            if os.path.isdir(phase_dir) and any(f.startswith('y_test_') for f in os.listdir(phase_dir)):
+                targets.append(item)
     return targets
 
-def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0):
+def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0, phase="validation"):
     """
     Load a specific cross-validation round's data for a target.
     
@@ -43,13 +43,23 @@ def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0):
         y_train and y_test will be the selected target column.
     """
     try:
+        # Construct phase-specific directories
+        phase_folder = f"{phase}_rounds"
+        phase_dir = os.path.join(target_dir, phase_folder)
+        x_phase_dir = os.path.join(x_files_dir, phase_folder)
+        # Verify directories exist
+        if not os.path.isdir(phase_dir):
+            raise FileNotFoundError(f"Phase directory not found: {phase_dir}")
+        if not os.path.isdir(x_phase_dir):
+            raise FileNotFoundError(f"X phase directory not found: {x_phase_dir}")
+
         # Load X data
-        X_train = pd.read_csv(f"{x_files_dir}/X_train_{cv_round}.csv", index_col=0)
-        X_test = pd.read_csv(f"{x_files_dir}/X_test_{cv_round}.csv", index_col=0)
-        
-        # Load y data from target-specific directory
-        y_train = pd.read_csv(f"{target_dir}/y_train_{cv_round}.csv", index_col=0)
-        y_test = pd.read_csv(f"{target_dir}/y_test_{cv_round}.csv", index_col=0)
+        X_train = pd.read_csv(f"{x_phase_dir}/X_train_{cv_round}.csv", index_col=0)
+        X_test = pd.read_csv(f"{x_phase_dir}/X_test_{cv_round}.csv", index_col=0)
+
+        # Load y data from phase directory
+        y_train = pd.read_csv(f"{phase_dir}/y_train_{cv_round}.csv", index_col=0)
+        y_test = pd.read_csv(f"{phase_dir}/y_test_{cv_round}.csv", index_col=0)
         
         # Convert indices to datetime with utc=True to avoid warnings
         X_train.index = pd.to_datetime(X_train.index, utc=True)
@@ -72,7 +82,7 @@ def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0):
         print(f"Error loading CV round {cv_round}: {e}")
         raise
 
-def get_cv_round_count(target_dir):
+def get_cv_round_count(target_dir, phase="validation"):
     """
     Get the total number of cross-validation rounds available for a target.
     
@@ -82,7 +92,11 @@ def get_cv_round_count(target_dir):
     Returns:
         int: The number of cross-validation rounds
     """
-    y_test_files = [f for f in os.listdir(target_dir) if f.startswith('y_test_')]
+    phase_folder = f"{phase}_rounds"
+    phase_dir = os.path.join(target_dir, phase_folder)
+    if not os.path.isdir(phase_dir):
+        raise FileNotFoundError(f"No cross-validation files found: {phase_dir}")
+    y_test_files = [f for f in os.listdir(phase_dir) if f.startswith('y_test_')]
     
     # Extract round numbers from filenames
     round_numbers = []
@@ -241,7 +255,8 @@ def train_and_evaluate_naive(X_train, y_train, X_test, y_test, step_size=32):
 
 def run_cv_for_target_naive(target, start_round=0, end_round=None, step=1,
                           step_size=32, output_dir=None,
-                          organized_dir="./src/data/csv", target_index=0):
+                          organized_dir="./src/data/csv", target_index=0,
+                          phase="validation"):
     """
     Run cross-validation for a specific target with naive model and overall R² calculation.
     
@@ -269,8 +284,8 @@ def run_cv_for_target_naive(target, start_round=0, end_round=None, step=1,
     # Set up output directory with timestamp
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     
-    # Get total number of rounds
-    total_rounds = get_cv_round_count(target_dir)
+    # Get total number of rounds for the specified phase
+    total_rounds = get_cv_round_count(target_dir, phase=phase)
     
     # Set default end_round if not provided
     if end_round is None:
@@ -330,7 +345,8 @@ def run_cv_for_target_naive(target, start_round=0, end_round=None, step=1,
                 cv_round=round_num,
                 target_dir=target_dir,
                 x_files_dir=x_files_dir,
-                target_index=target_index
+                target_index=target_index,
+                phase=phase
             )
 
             # Apply naive model and evaluate
@@ -588,8 +604,10 @@ def main():
     parser.add_argument('--output', type=str, default='./results/naive',
                        help='Base directory to save results (default: ./results/naive)')
     
-    parser.add_argument('--organized-dir', type=str, default='./src/data/csv',
-                       help='Base directory for organized files (default: ./src/data/csv)')
+    parser.add_argument('--organized-dir', type=str, default='/Volumes/T9',
+                       help='Base directory for organized files (default: /Volumes/T9)')
+    parser.add_argument('--phase', type=str, default='validation', choices=['validation', 'test'],
+                       help='Phase to use for cross-validation (validation or test) (default: validation)')
     
     parser.add_argument('--list', action='store_true',
                        help='List available targets and exit')
@@ -599,15 +617,15 @@ def main():
     
     args = parser.parse_args()
     
-    # Get available targets
-    available_targets = get_available_targets(args.organized_dir)
+    # Get available targets for the specified phase
+    available_targets = get_available_targets(args.organized_dir, phase=args.phase)
     
     if args.list or not available_targets:
-        print("\nAvailable targets:")
+        print(f"\nAvailable targets for phase '{args.phase}':")
         for target in available_targets:
             target_dir = os.path.join(args.organized_dir, target)
             try:
-                num_rounds = get_cv_round_count(target_dir)
+                num_rounds = get_cv_round_count(target_dir, phase=args.phase)
                 print(f"  {target} ({num_rounds} rounds)")
             except Exception as e:
                 print(f"  {target} (Error: {str(e)})")
@@ -619,12 +637,12 @@ def main():
     # Process each target
     for target in target_list:
         if target not in available_targets:
-            print(f"Target '{target}' not found in available targets.")
+            print(f"Target '{target}' not found in available targets for phase '{args.phase}'.")
             continue
         
         try:
             print(f"\n{'='*50}")
-            print(f"Processing target: {target}")
+            print(f"Processing target: {target} (Phase: {args.phase})")
             print(f"{'='*50}")
             
             # Determine target indices to process
@@ -642,7 +660,8 @@ def main():
                     step_size=args.step_size,
                     output_dir=args.output,
                     organized_dir=args.organized_dir,
-                    target_index=target_index
+                    target_index=target_index,
+                    phase=args.phase
                 )
         except Exception as e:
             print(f"Error processing target {target}: {str(e)}")
