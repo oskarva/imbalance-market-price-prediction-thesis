@@ -8,6 +8,7 @@ from pathlib import Path
 import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
+import joblib
 from functools import partial
 
 def add_time_features(df):
@@ -247,6 +248,9 @@ def train_and_evaluate(X_train, y_train, X_test, y_test, params):
     model = xgb.XGBRegressor(**params)
     print(f"  Training model with {X_train_clean.shape[1]} features...")
     model.fit(X_train_clean, y_train_vals_clean)
+    # Save model after training
+    os.makedirs('models', exist_ok=True)
+    joblib.dump(model, os.path.join('models', 'xgb_last_run.joblib'), compress=3)
 
     # Make predictions
     print(f"  Making predictions on test set with {X_test_clean.shape[1]} features...")

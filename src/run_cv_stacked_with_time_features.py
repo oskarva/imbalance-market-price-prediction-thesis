@@ -13,12 +13,13 @@ import multiprocessing
 from functools import partial
 import warnings
 from joblib import dump, load
+import joblib
 from datetime import datetime
 
 # Suppress warnings to reduce output clutter
 warnings.filterwarnings('ignore')
 
-# --- Added Time Feature Function ---
+
 def add_time_features(df):
     """
     Add time-based features to the dataframe.
@@ -54,7 +55,7 @@ def add_time_features(df):
     df_with_features['cos_month'] = np.cos(2 * np.pi * df_with_features.index.month / months_in_year)
 
     return df_with_features
-# --- End of Added Time Feature Function ---
+
 
 def process_single_round_stacked_with_saved_model(round_num, target, target_dir, x_files_dir,
                                                   target_index, ebm_params, xgb_params,
@@ -473,6 +474,9 @@ def train_and_evaluate_stacked(X_train, y_train, X_test, y_test, ebm_model, xgb_
         print(f"  Training XGBoost model on residuals with {X_train.shape[1]} features...")
         xgb_model = xgb.XGBRegressor(**xgb_params)
         xgb_model.fit(X_train, train_residuals)
+        # Save stacked model (XGBoost residual model) after training
+        os.makedirs('models', exist_ok=True)
+        joblib.dump(xgb_model, os.path.join('models', 'stacked_last_run.joblib'), compress=3)
 
         # Get XGBoost predictions on test data (predicting residuals)
         print(f"  Making XGBoost predictions on test set with {X_test.shape[1]} features...")
