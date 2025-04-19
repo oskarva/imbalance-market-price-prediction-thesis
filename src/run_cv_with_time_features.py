@@ -10,6 +10,73 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
 import joblib
 from functools import partial
+import warnings # Added warning import
+
+# Suppress warnings (optional)
+warnings.filterwarnings('ignore')
+
+PREDEFINED_PARAMETER_SETS = {
+        'set1_robust': {
+            'objective': 'reg:absoluteerror',
+            'learning_rate': 0.01,
+            'n_estimators': 1000,
+            'max_depth': 6,
+            'subsample': 0.9,
+            'colsample_bytree': 0.9,
+            'min_child_weight': 5,
+            'random_state': 42,
+            'tree_method': 'hist'
+        },
+        'set2_regularized': {
+            'objective': 'reg:squarederror',
+            'learning_rate': 0.05,
+            'n_estimators': 500,
+            'max_depth': 4,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'gamma': 1.0,
+            'random_state': 42,
+            'tree_method': 'hist'
+        },
+        'set3_outlier_robust': {
+            'objective': 'reg:pseudohubererror',
+            'learning_rate': 0.03,
+            'n_estimators': 700,
+            'max_depth': 5,
+            'subsample': 0.85,
+            'colsample_bytree': 0.85,
+            'random_state': 42,
+            'tree_method': 'hist'
+        },
+        'set4_extreme_events': {
+            'objective': 'reg:quantileerror',
+            'quantile_alpha': 0.5,  # Median regression as base
+            'learning_rate': 0.02,
+            'n_estimators': 1200,
+            'max_depth': 7,
+            'subsample': 0.7,
+            'colsample_bytree': 0.7,
+            'min_child_weight': 3,
+            'random_state': 42,
+            'tree_method': 'hist'
+        },
+        'set5_ensemble_diverse': {
+            'objective': 'reg:squarederror',
+            'learning_rate': 0.01,
+            'n_estimators': 800,
+            'max_depth': 5,
+            'subsample': 0.75,
+            'colsample_bytree': 0.75,
+            'colsample_bylevel': 0.75,  # Additional randomization
+            'gamma': 0.5,
+            'reg_alpha': 0.1,  # L1 regularization
+            'reg_lambda': 1.0,  # L2 regularization
+            'random_state': 42,
+            'tree_method': 'hist'
+        }
+    }
+
+
 
 def add_time_features(df):
     """
@@ -93,13 +160,13 @@ def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0, phase="vali
         phase_folder = f"{phase}_rounds"
         phase_dir = os.path.join(target_dir, phase_folder)
         x_phase_dir = os.path.join(x_files_dir, phase_folder)
-        
+
         # Verify directories exist
         if not os.path.isdir(phase_dir):
             raise FileNotFoundError(f"Phase directory not found: {phase_dir}")
         if not os.path.isdir(x_phase_dir):
             raise FileNotFoundError(f"X phase directory not found: {x_phase_dir}")
-            
+
         # Load X data from phase directory
         X_train = pd.read_csv(f"{x_phase_dir}/X_train_{cv_round}.csv", index_col=0)
         X_test = pd.read_csv(f"{x_phase_dir}/X_test_{cv_round}.csv", index_col=0)
@@ -115,11 +182,11 @@ def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0, phase="vali
         y_test.index = pd.to_datetime(y_test.index, utc=True)
 
         # --- Add Time Features to X data ---
-        print(f"  Adding time features to X_train and X_test for round {cv_round}...")
+        # print(f"  Adding time features to X_train and X_test for round {cv_round}...") # Less verbose
         X_train = add_time_features(X_train)
         X_test = add_time_features(X_test)
-        print(f"  New X_train columns: {X_train.columns.tolist()}")
-        print(f"  New X_test columns: {X_test.columns.tolist()}")
+        # print(f"  New X_train columns: {X_train.columns.tolist()}") # Less verbose
+        # print(f"  New X_test columns: {X_test.columns.tolist()}") # Less verbose
         # --- End of Adding Time Features ---
 
         # If y_train is a DataFrame with multiple columns, select the column based on target_index.
@@ -151,11 +218,11 @@ def get_cv_round_count(target_dir, phase="validation"):
     # Construct path with phase folder
     phase_folder = f"{phase}_rounds"
     phase_dir = os.path.join(target_dir, phase_folder)
-    
+
     # Verify directory exists
     if not os.path.isdir(phase_dir):
         raise FileNotFoundError(f"Phase directory not found: {phase_dir}")
-    
+
     y_test_files = [f for f in os.listdir(phase_dir) if f.startswith('y_test_')]
 
     # Extract round numbers from filenames
@@ -235,7 +302,8 @@ def train_and_evaluate(X_train, y_train, X_test, y_test, params):
             'model': None,
             'metrics': {
                 'mae': float('nan'),
-                'rmse': float('nan')
+                'rmse': float('nan'),
+                'r2': float('nan') 
             },
             'predictions': pd.DataFrame(columns=['actual', 'predicted', 'timestamp']),
             'rows_removed': {
@@ -259,6 +327,11 @@ def train_and_evaluate(X_train, y_train, X_test, y_test, params):
     # Calculate metrics
     mae = mean_absolute_error(y_test_vals_clean, y_pred)
     rmse = np.sqrt(mean_squared_error(y_test_vals_clean, y_pred))
+    # Calculate R² only if variance is sufficient
+    r2 = float('nan')
+    if np.var(y_test_vals_clean) > 1e-9:
+        r2 = r2_score(y_test_vals_clean, y_pred)
+
 
     # Create DataFrame with predictions
     pred_df = pd.DataFrame({
@@ -272,7 +345,8 @@ def train_and_evaluate(X_train, y_train, X_test, y_test, params):
         'model': model,
         'metrics': {
             'mae': mae,
-            'rmse': rmse
+            'rmse': rmse,
+            'r2': r2 
         },
         'predictions': pred_df,
         'rows_removed': {
@@ -283,7 +357,8 @@ def train_and_evaluate(X_train, y_train, X_test, y_test, params):
 
 def run_cv_for_target(target, start_round=0, end_round=None, step=1,
                      model_params=None, output_dir=None,
-                     organized_dir="./src/data/csv", target_index=0, phase="validation"):
+                     organized_dir="./src/data/csv", target_index=0, phase="validation",
+                     param_set_name=None): 
     """
     Run cross-validation for a specific target with overall R² calculation.
 
@@ -292,11 +367,12 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
         start_round: First CV round to process
         end_round: Last CV round to process (None = all available)
         step: Step size for processing rounds
-        model_params: Parameters for the model
+        model_params: Parameters for the model (used if param_set_name is None)
         output_dir: Directory to save results
         organized_dir: Base directory for organized files
         target_index: Index of target variable (0 or 1) for regulation up/down
         phase: Either "validation" or "test" to specify which phase's data to use
+        param_set_name: Name of the parameter set (if provided)
 
     Returns:
         Dictionary with results summary
@@ -309,18 +385,17 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
     if not os.path.isdir(target_dir):
         raise ValueError(f"Target directory not found: {target_dir}")
 
-    # Default model parameters if none provided
-    if model_params is None:
-        model_params = {
-            'objective': 'reg:squarederror',
-            'n_estimators': 1000,
-            'learning_rate': 0.05,
-            'max_depth': 10,
-            'subsample': 1,
-            'colsample_bytree': 0.9,
-            'random_state': 42,
-            'tree_method': 'hist' # Often faster for large datasets
-        }
+    # Determine model parameters (prioritize param_set_name)
+    if param_set_name:
+        if param_set_name in PREDEFINED_PARAMETER_SETS:
+            actual_model_params = PREDEFINED_PARAMETER_SETS[param_set_name]
+            print(f"Using predefined parameter set: '{param_set_name}'")
+        else:
+            raise ValueError(f"Parameter set name '{param_set_name}' not found in PREDEFINED_PARAMETER_SETS.")
+    elif model_params:
+        actual_model_params = model_params
+        param_set_name = "custom" # Indicate custom params were used
+        print("Using custom parameters provided via command line.")
 
     # Set up output directory with timestamp
     timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -336,13 +411,17 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
 
     # Create a unique directory for the run
     if output_dir is None:
-        # Use the new directory structure
-        base_dir = f"./results/xgboost_timefeat/{timestamp}_{phase}" # Changed base dir name to include phase
+        # Use the new directory structure including param set name
+        base_dir = f"./results/xgboost_timefeat/{timestamp}_{phase}"
         os.makedirs(base_dir, exist_ok=True)
-        index_output_dir = f"{base_dir}/{target}_ind_{target_index}"
+        # Include param_set_name in the directory path
+        index_output_dir = f"{base_dir}/{target}_ind_{target_index}_{param_set_name}"
     else:
         # Use the provided output directory directly
         index_output_dir = output_dir
+        # Optionally append param_set_name if desired even with explicit output dir
+        # index_output_dir = os.path.join(output_dir, f"{target}_ind_{target_index}_{param_set_name}")
+
 
     # Create output directory
     os.makedirs(index_output_dir, exist_ok=True)
@@ -353,7 +432,8 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
         'start_round': start_round,
         'end_round': end_round,
         'step': step,
-        'model_params': model_params,
+        'parameter_set_name': param_set_name, # Store the name used
+        'model_params': actual_model_params, # Store the actual params used
         'timestamp': timestamp,
         'target_index': target_index,
         'time_features_added': True, # Indicate time features were used
@@ -367,12 +447,15 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
     print(f"Phase: {phase}")
     print(f"Rounds: {start_round} to {end_round-1} with step {step}")
     print(f"Total rounds available: {total_rounds}")
-    print(f"Model parameters: {model_params}")
+    print(f"Parameter set: '{param_set_name}'")
+    print(f"Model parameters: {actual_model_params}")
+
 
     # Track metrics across all rounds
     all_metrics = {
         'mae': [],
-        'rmse': []
+        'rmse': [],
+        'r2': [] 
     }
 
     # Track all predictions for overall R² calculation
@@ -402,7 +485,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
                 y_train=y_train,
                 X_test=X_test,
                 y_test=y_test,
-                params=model_params
+                params=actual_model_params # Use the determined params
             )
 
             # Check if we skipped this round due to not enough valid data
@@ -417,9 +500,11 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
             # Store results
             round_results[round_num] = result['metrics']
 
-            # Update tracking metrics
+            # Update tracking metrics, handling potential NaN for R2
             all_metrics['mae'].append(result['metrics']['mae'])
             all_metrics['rmse'].append(result['metrics']['rmse'])
+            if pd.notna(result['metrics']['r2']): # Only append valid R2 scores
+                 all_metrics['r2'].append(result['metrics']['r2'])
 
             # Add to all predictions for overall R² calculation
             all_predictions.append(result['predictions'])
@@ -427,6 +512,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
             # Print round results
             print(f"  MAE: {result['metrics']['mae']:.4f}")
             print(f"  RMSE: {result['metrics']['rmse']:.4f}")
+            print(f"  R²: {result['metrics']['r2']:.4f}") 
 
             if 'rows_removed' in result:
                 print(f"  Rows removed: {result['rows_removed']['train']} train, {result['rows_removed']['test']} test")
@@ -456,12 +542,13 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
             plt.xlabel('Actual')
             plt.ylabel('Predicted')
 
-            # Calculate round-specific R² for the plot title only
-            if np.var(pred_df['actual']) > 1e-9: # Avoid division by zero or near-zero
-                r2 = r2_score(pred_df['actual'], pred_df['predicted'])
-                plt.title(f'Round {round_num} ({phase}) Correlation (R² = {r2:.4f})')
+            # Use the round-specific R² calculated in train_and_evaluate
+            round_r2 = result['metrics']['r2']
+            if pd.notna(round_r2):
+                plt.title(f'Round {round_num} ({phase}) Correlation (R² = {round_r2:.4f})')
             else:
                 plt.title(f'Round {round_num} ({phase}) Correlation (R² undefined)')
+
 
             # Add perfect prediction line only if data exists
             if not pred_df.empty:
@@ -500,7 +587,8 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
             'successful_rounds': successful_rounds,
             'failed_rounds': failed_rounds,
             'error': "All rounds failed or were skipped",
-            'phase': phase
+            'phase': phase,
+            'parameter_set_name': param_set_name
         }
 
         with open(os.path.join(index_output_dir, 'summary.json'), 'w') as f:
@@ -515,7 +603,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
     if all_predictions:
         combined_predictions = pd.concat(all_predictions, ignore_index=True)
 
-        # Calculate overall R² on all predictions combined
+        # Calculate overall metrics on all predictions combined
         overall_actual = combined_predictions['actual'].values
         overall_predicted = combined_predictions['predicted'].values
 
@@ -555,10 +643,11 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
             f"MAE: {overall_mae:.4f}\n"
             f"RMSE: {overall_rmse:.4f}\n"
             f"R²: {overall_r2:.4f}\n"
-            f"Samples: {len(overall_actual)}"
+            f"Samples: {len(overall_actual)}\n"
+            f"Param Set: {param_set_name}" 
         )
 
-        plt.figtext(0.15, 0.8, stats_text, fontsize=12,
+        plt.figtext(0.15, 0.75, stats_text, fontsize=12, # Adjusted position
                    bbox=dict(facecolor='white', alpha=0.8))
 
         plt.tight_layout()
@@ -569,8 +658,10 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
     summary = {
         'avg_mae': np.mean(all_metrics['mae']) if all_metrics['mae'] else float('nan'),
         'avg_rmse': np.mean(all_metrics['rmse']) if all_metrics['rmse'] else float('nan'),
+        'avg_r2': np.mean(all_metrics['r2']) if all_metrics['r2'] else float('nan'), # Avg R2
         'std_mae': np.std(all_metrics['mae']) if all_metrics['mae'] else float('nan'),
         'std_rmse': np.std(all_metrics['rmse']) if all_metrics['rmse'] else float('nan'),
+        'std_r2': np.std(all_metrics['r2']) if all_metrics['r2'] else float('nan'), # Std R2
         'min_mae': np.min(all_metrics['mae']) if all_metrics['mae'] else float('nan'),
         'overall_r2': overall_r2,
         'overall_mae': overall_mae,
@@ -578,28 +669,33 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
         'processed_rounds': failed_rounds + successful_rounds,
         'successful_rounds': successful_rounds,
         'failed_rounds': failed_rounds,
-        'phase': phase
+        'phase': phase,
+        'parameter_set_name': param_set_name 
     }
 
     # Print summary
     print("\nCross-validation summary:")
     print(f"Phase: {phase}")
+    print(f"Parameter Set: '{param_set_name}'")
     print(f"Processed {summary['processed_rounds']} rounds ({summary['successful_rounds']} successful, {summary['failed_rounds']} failed/skipped)")
     print(f"Avg MAE: {summary['avg_mae']:.4f} ± {summary['std_mae']:.4f}")
     print(f"Avg RMSE: {summary['avg_rmse']:.4f} ± {summary['std_rmse']:.4f}")
+    print(f"Avg R²: {summary['avg_r2']:.4f} ± {summary['std_r2']:.4f}")
     print(f"Overall R² (calculated on all predictions): {summary['overall_r2']:.4f}")
     print(f"Overall MAE: {summary['overall_mae']:.4f}")
     print(f"Overall RMSE: {summary['overall_rmse']:.4f}")
 
-    # Create MAE/RMSE summary plots
+    # Create MAE/RMSE/R2 summary plots
     if round_results:
-        plt.figure(figsize=(12, 5))
+        plt.figure(figsize=(18, 5)) # Wider figure
         rounds = sorted(list(round_results.keys())) # Sort rounds for plotting
         mae_values = [round_results[r]['mae'] for r in rounds]
         rmse_values = [round_results[r]['rmse'] for r in rounds]
+        r2_values = [round_results[r]['r2'] for r in rounds] # Get R2 values
+
 
         # Plot MAE across rounds
-        plt.subplot(1, 2, 1)
+        plt.subplot(1, 3, 1) # Changed to 1x3 grid
         plt.bar([str(r) for r in rounds], mae_values) # Use string labels for rounds
         if not np.isnan(overall_mae):
              plt.axhline(y=overall_mae, color='r', linestyle='-', label=f'Overall MAE: {overall_mae:.4f}')
@@ -611,7 +707,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
         plt.legend()
 
         # Plot RMSE across rounds
-        plt.subplot(1, 2, 2)
+        plt.subplot(1, 3, 2) # Changed to 1x3 grid
         plt.bar([str(r) for r in rounds], rmse_values) # Use string labels for rounds
         if not np.isnan(overall_rmse):
              plt.axhline(y=overall_rmse, color='r', linestyle='-', label=f'Overall RMSE: {overall_rmse:.4f}')
@@ -621,6 +717,19 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
         plt.xticks(rotation=45, ha='right')
         plt.grid(True, axis='y')
         plt.legend()
+
+        # Plot R² across rounds
+        plt.subplot(1, 3, 3) # Changed to 1x3 grid
+        plt.bar([str(r) for r in rounds], r2_values) # Use string labels for rounds
+        if not np.isnan(overall_r2):
+             plt.axhline(y=overall_r2, color='r', linestyle='-', label=f'Overall R²: {overall_r2:.4f}')
+        plt.xlabel('Round Number')
+        plt.ylabel('R²')
+        plt.title(f'R² Values Across Rounds - {phase.capitalize()} Phase')
+        plt.xticks(rotation=45, ha='right')
+        plt.grid(True, axis='y')
+        plt.legend()
+
 
         plt.tight_layout()
         plt.savefig(os.path.join(index_output_dir, "metrics_summary.png"))
@@ -655,7 +764,7 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
 def try_parameter_sets_for_target(target, start_round=0, end_round=None, step=1,
                                organized_dir="./src/data/csv", target_index=0, phase="validation"):
     """
-    Try different parameter sets for a specific target, running full cross-validation for each.
+    Try different predefined parameter sets for a specific target, running full cross-validation for each.
     This will use the modified run_cv_for_target which adds time features.
 
     Args:
@@ -670,103 +779,47 @@ def try_parameter_sets_for_target(target, start_round=0, end_round=None, step=1,
     Returns:
         Dictionary with results summary for each parameter set
     """
-    # Define the parameter sets
-    parameter_sets = {
-        'set1_robust': {
-            'objective': 'reg:absoluteerror',
-            'learning_rate': 0.01,
-            'n_estimators': 1000,
-            'max_depth': 6,
-            'subsample': 0.9,
-            'colsample_bytree': 0.9,
-            'min_child_weight': 5,
-            'random_state': 42,
-            'tree_method': 'hist'
-        },
-        'set2_regularized': {
-            'objective': 'reg:squarederror',
-            'learning_rate': 0.05,
-            'n_estimators': 500,
-            'max_depth': 4,
-            'subsample': 0.8,
-            'colsample_bytree': 0.8,
-            'gamma': 1.0,
-            'random_state': 42,
-            'tree_method': 'hist'
-        },
-        'set3_outlier_robust': {
-            'objective': 'reg:pseudohubererror',
-            'learning_rate': 0.03,
-            'n_estimators': 700,
-            'max_depth': 5,
-            'subsample': 0.85,
-            'colsample_bytree': 0.85,
-            'random_state': 42,
-            'tree_method': 'hist'
-        },
-        'set4_extreme_events': {
-            'objective': 'reg:quantileerror',
-            'quantile_alpha': 0.5,  # Median regression as base
-            'learning_rate': 0.02,
-            'n_estimators': 1200,
-            'max_depth': 7,
-            'subsample': 0.7,
-            'colsample_bytree': 0.7,
-            'min_child_weight': 3,
-            'random_state': 42,
-            'tree_method': 'hist'
-        },
-        'set5_ensemble_diverse': {
-            'objective': 'reg:squarederror',
-            'learning_rate': 0.01,
-            'n_estimators': 800,
-            'max_depth': 5,
-            'subsample': 0.75,
-            'colsample_bytree': 0.75,
-            'colsample_bylevel': 0.75,  # Additional randomization
-            'gamma': 0.5,
-            'reg_alpha': 0.1,  # L1 regularization
-            'reg_lambda': 1.0,  # L2 regularization
-            'random_state': 42,
-            'tree_method': 'hist'
-        }
-    }
+    # Use the globally defined parameter sets
+    parameter_sets_to_try = PREDEFINED_PARAMETER_SETS
 
     # Get timestamp for the run
     timestamp = time.strftime("%Y%m%d-%H%M%S")
 
     # Set up base output directory
-    base_output_dir = f"./results/xgboost_timefeat_optimize/{timestamp}_{phase}" # Changed base dir name to include phase
+    base_output_dir = f"./results/xgboost_timefeat_optimize/{timestamp}_{phase}"
     os.makedirs(base_output_dir, exist_ok=True)
 
     # Store results for each parameter set
     optimization_results = {}
 
     # Try each parameter set
-    for param_name, params in parameter_sets.items():
+    for param_name, params in parameter_sets_to_try.items():
         print(f"\n{'='*50}")
-        print(f"Trying parameter set: {param_name} for target: {target}, index: {target_index}, phase: {phase} (with time features)")
-        print(f"Parameters: {params}")
+        print(f"Optimizing: Trying parameter set: {param_name} for target: {target}, index: {target_index}, phase: {phase} (with time features)")
+        # print(f"Parameters: {params}") # Already printed inside run_cv_for_target
         print(f"{'='*50}")
 
-        # Run cross-validation with these parameters (will add time features internally)
-        output_dir = f"{base_output_dir}/{target}_{param_name}_ind_{target_index}"
+        # Define output dir for this specific param set run within the optimization folder
+        output_dir_param_set = os.path.join(base_output_dir, f"{target}_ind_{target_index}_{param_name}")
 
+
+        # Run cross-validation using the parameter set name
         result = run_cv_for_target(
             target=target,
             start_round=start_round,
             end_round=end_round,
             step=step,
-            model_params=params,
-            output_dir=output_dir,
+            model_params=None, # Pass None for params, use name instead
+            output_dir=output_dir_param_set, # Use specific dir for this run
             organized_dir=organized_dir,
             target_index=target_index,
-            phase=phase  # Pass the phase parameter
+            phase=phase,
+            param_set_name=param_name # Pass the name
         )
 
-        # Store the result
+        # Store the result using the param_name as the key
         optimization_results[param_name] = {
-            'parameters': params,
+            'parameters': params, # Store params for reference
             'summary': result['summary'] if 'summary' in result else result
         }
 
@@ -776,7 +829,7 @@ def try_parameter_sets_for_target(target, start_round=0, end_round=None, step=1,
         'target_index': target_index,
         'phase': phase,
         'timestamp': timestamp,
-        'parameter_sets': list(parameter_sets.keys()),
+        'parameter_sets_evaluated': list(parameter_sets_to_try.keys()),
         'metrics': {},
         'time_features_added': True
     }
@@ -788,10 +841,11 @@ def try_parameter_sets_for_target(target, start_round=0, end_round=None, step=1,
             comparison['metrics'][param_name] = {
                 'overall_r2': summary.get('overall_r2', float('nan')),
                 'overall_mae': summary.get('overall_mae', float('nan')),
-                'overall_rmse': summary.get('overall_rmse', float('nan'))
+                'overall_rmse': summary.get('overall_rmse', float('nan')),
+                'avg_r2': summary.get('avg_r2', float('nan')) # Added avg R2
             }
 
-    # Determine best parameter set based on R²
+    # Determine best parameter set based on overall R²
     if comparison['metrics']:
         best_r2 = -float('inf')
         best_param_set = None
@@ -804,7 +858,19 @@ def try_parameter_sets_for_target(target, start_round=0, end_round=None, step=1,
                 best_param_set = param_name
 
         comparison['best_parameter_set'] = best_param_set
-        comparison['best_r2'] = best_r2 if best_param_set is not None else float('nan')
+        comparison['best_overall_r2'] = best_r2 if best_param_set is not None else float('nan')
+
+        # Also find best based on average R2 across folds (might be more robust)
+        best_avg_r2 = -float('inf')
+        best_param_set_avg = None
+        for param_name, metrics in comparison['metrics'].items():
+            avg_r2 = metrics.get('avg_r2', -float('inf'))
+            if pd.notna(avg_r2) and avg_r2 > best_avg_r2:
+                 best_avg_r2 = avg_r2
+                 best_param_set_avg = param_name
+        comparison['best_parameter_set_avg_r2'] = best_param_set_avg
+        comparison['best_avg_r2'] = best_avg_r2 if best_param_set_avg is not None else float('nan')
+
 
     # Save comparison summary
     comparison_path = os.path.join(base_output_dir, f"{target}_ind_{target_index}_comparison.json")
@@ -829,17 +895,69 @@ def try_parameter_sets_for_target(target, start_round=0, end_round=None, step=1,
         comparison_serializable = convert_numpy_types(comparison)
         json.dump(comparison_serializable, f, indent=4)
 
+    # Generate comparison plot
+    if comparison['metrics']:
+        param_names = list(comparison['metrics'].keys())
+        overall_r2_values = [comparison['metrics'][p].get('overall_r2', np.nan) for p in param_names]
+        avg_r2_values = [comparison['metrics'][p].get('avg_r2', np.nan) for p in param_names] # Added avg R2
+
+        plt.figure(figsize=(12, 6))
+
+        # Plot Overall R²
+        plt.subplot(1, 2, 1)
+        bars1 = plt.bar(param_names, overall_r2_values)
+        plt.xlabel('Parameter Set')
+        plt.ylabel('Overall R²')
+        plt.title(f'Overall R² Comparison ({target} ind {target_index}, {phase})')
+        plt.xticks(rotation=45, ha='right')
+        plt.grid(True, axis='y')
+        # Add value labels
+        for bar in bars1:
+             height = bar.get_height()
+             if pd.notna(height):
+                 plt.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                          f'{height:.4f}', ha='center', va='bottom', fontsize=8)
+
+        # Plot Average R²
+        plt.subplot(1, 2, 2)
+        bars2 = plt.bar(param_names, avg_r2_values)
+        plt.xlabel('Parameter Set')
+        plt.ylabel('Average R² (across rounds)')
+        plt.title(f'Average R² Comparison ({target} ind {target_index}, {phase})')
+        plt.xticks(rotation=45, ha='right')
+        plt.grid(True, axis='y')
+         # Add value labels
+        for bar in bars2:
+             height = bar.get_height()
+             if pd.notna(height):
+                 plt.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                          f'{height:.4f}', ha='center', va='bottom', fontsize=8)
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(base_output_dir, f"{target}_ind_{target_index}_comparison_plot.png"))
+        plt.close()
+
     print(f"\nComparison of parameter sets saved to: {comparison_path}")
 
     if 'best_parameter_set' in comparison and comparison['best_parameter_set'] is not None:
-        print(f"Best parameter set: {comparison['best_parameter_set']} with R² = {comparison['best_r2']:.4f}")
+        print(f"Best parameter set (Overall R²): {comparison['best_parameter_set']} with Overall R² = {comparison['best_overall_r2']:.4f}")
     else:
-        print("Could not determine best parameter set (no valid R² scores found).")
+        print("Could not determine best parameter set based on Overall R².")
+
+    if 'best_parameter_set_avg_r2' in comparison and comparison['best_parameter_set_avg_r2'] is not None:
+        print(f"Best parameter set (Average R²): {comparison['best_parameter_set_avg_r2']} with Average R² = {comparison['best_avg_r2']:.4f}")
+    else:
+         print("Could not determine best parameter set based on Average R².")
 
     return optimization_results
 
 def main():
     parser = argparse.ArgumentParser(description='Run cross-validation with overall R² calculation and optional time features')
+
+    
+    parser.add_argument('--param-set-name', type=str, default=None,
+                       help=f'Name of a predefined parameter set to use. Available: {list(PREDEFINED_PARAMETER_SETS.keys())}. If provided, overrides individual hyperparameter args.')
+    
 
     parser.add_argument('--targets', type=str, default=None,
                        help='Target to process, comma-separated (default: show available targets)')
@@ -854,45 +972,46 @@ def main():
                        help='Step size for processing rounds (default: 1)')
 
     parser.add_argument('--output', type=str, default=None,
-                       help='Base directory to save results (default: ./results/xgboost_timefeat/DATE or ./results/xgboost_timefeat_optimize/DATE)')
+                       help='Base directory to save results (default: ./results/xgboost_timefeat... or ./results/xgboost_timefeat_optimize...)')
 
     parser.add_argument('--organized-dir', type=str, default='./src/data/csv',
                        help='Base directory for organized files (default: ./src/data/csv)')
 
+    
     parser.add_argument('--n_estimators', type=int, default=500,
-                       help='Number of estimators for XGBoost (default: 500)')
+                       help='Number of estimators for XGBoost (default: 500). Ignored if --param-set-name is used.')
 
     parser.add_argument('--learning_rate', type=float, default=0.05,
-                       help='Learning rate for XGBoost (default: 0.05)')
+                       help='Learning rate for XGBoost (default: 0.05). Ignored if --param-set-name is used.')
 
     parser.add_argument('--max_depth', type=int, default=6,
-                       help='Max depth for XGBoost (default: 6)')
+                       help='Max depth for XGBoost (default: 6). Ignored if --param-set-name is used.')
 
     parser.add_argument('--subsample', type=float, default=0.8,
-                       help='Subsample ratio for XGBoost (default: 0.8)')
+                       help='Subsample ratio for XGBoost (default: 0.8). Ignored if --param-set-name is used.')
+
+    parser.add_argument('--objective', type=str, default='reg:squarederror',
+                        help='Objective function for XGBoost (default: reg:squarederror). Ignored if --param-set-name is used.')
+
+    parser.add_argument('--colsample_bytree', type=float, default=0.9,
+                        help='Colsample by tree for XGBoost (default: 0.9). Ignored if --param-set-name is used.')
+
+    parser.add_argument('--min_child_weight', type=int, default=1,
+                        help='Min child weight for XGBoost (default: 1). Ignored if --param-set-name is used.')
+
+    parser.add_argument('--gamma', type=float, default=0,
+                        help='Gamma for XGBoost (default: 0). Ignored if --param-set-name is used.')
+    
 
     parser.add_argument('--list', action='store_true',
                        help='List available targets and exit')
-
-    parser.add_argument('--objective', type=str, default='reg:squarederror',
-                        help='Objective function for XGBoost (default: reg:squarederror)')
 
     parser.add_argument('--target-index', type=int, default=None,
                         help='Index of target to process (0 or 1, default: run both)')
 
     parser.add_argument('--optimize', action='store_true',
-                        help='Try multiple parameter sets and compare results (will use time features)')
+                        help='Try multiple predefined parameter sets and compare results (will use time features)')
 
-    parser.add_argument('--colsample_bytree', type=float, default=0.9,
-                        help='Colsample by tree for XGBoost (default: 0.9)')
-
-    parser.add_argument('--min_child_weight', type=int, default=1,
-                        help='Min child weight for XGBoost (default: 1)')
-
-    parser.add_argument('--gamma', type=float, default=0,
-                        help='Gamma for XGBoost (default: 0)')
-                        
-    # Add new phase parameter
     parser.add_argument('--phase', type=str, default='validation', choices=['validation', 'test'],
                         help='Phase to use for cross-validation (validation or test) (default: validation)')
 
@@ -912,19 +1031,21 @@ def main():
                 print(f"  {target} (Error: {str(e)})")
         return
 
-    # Configure model parameters (only used if --optimize is False)
-    model_params = {
-        'objective': args.objective,
-        'n_estimators': args.n_estimators,
-        'learning_rate': args.learning_rate,
-        'max_depth': args.max_depth,
-        'subsample': args.subsample,
-        'colsample_bytree': args.colsample_bytree,
-        'min_child_weight': args.min_child_weight,
-        'gamma': args.gamma,
-        'random_state': 42,
-        'tree_method': 'hist' # Added for consistency
-    }
+    custom_model_params = None
+    if not args.optimize and not args.param_set_name:
+         custom_model_params = {
+             'objective': args.objective,
+             'n_estimators': args.n_estimators,
+             'learning_rate': args.learning_rate,
+             'max_depth': args.max_depth,
+             'subsample': args.subsample,
+             'colsample_bytree': args.colsample_bytree,
+             'min_child_weight': args.min_child_weight,
+             'gamma': args.gamma,
+             'random_state': 42,
+             'tree_method': 'hist'
+         }
+
 
     # Determine targets to process
     target_list = available_targets if args.targets is None else args.targets.split(',')
@@ -948,7 +1069,7 @@ def main():
 
             for target_index in target_indices:
                 if args.optimize:
-                    # Try multiple parameter sets (will use time features)
+                    # Try multiple predefined parameter sets
                     try_parameter_sets_for_target(
                         target=target,
                         start_round=args.start,
@@ -956,21 +1077,24 @@ def main():
                         step=args.step,
                         organized_dir=args.organized_dir,
                         target_index=target_index,
-                        phase=args.phase  # Pass the phase parameter
+                        phase=args.phase
                     )
                 else:
-                    # Run cross-validation with specified parameters (will use time features)
+                    
+                    # Run cross-validation with specified parameters (either name or custom)
                     run_cv_for_target(
                         target=target,
                         start_round=args.start,
                         end_round=args.end,
                         step=args.step,
-                        model_params=model_params,
-                        output_dir=args.output, # Base dir handled inside run_cv_for_target
+                        model_params=custom_model_params, # Pass custom params if name not used
+                        output_dir=args.output,
                         organized_dir=args.organized_dir,
                         target_index=target_index,
-                        phase=args.phase  # Pass the phase parameter
+                        phase=args.phase,
+                        param_set_name=args.param_set_name # Pass the name if provided
                     )
+                    
         except Exception as e:
             print(f"Critical error processing target {target}: {type(e).__name__} - {str(e)}")
             # Optionally add traceback here for debugging

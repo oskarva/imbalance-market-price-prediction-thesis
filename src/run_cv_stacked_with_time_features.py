@@ -234,11 +234,11 @@ def load_cv_round(cv_round, target_dir, x_files_dir, target_index=0, phase="vali
         y_test.index = pd.to_datetime(y_test.index, utc=True)
 
         # --- Add Time Features to X data ---
-        print(f"  Adding time features to X_train and X_test for round {cv_round} ({phase})...")
+        #print(f"  Adding time features to X_train and X_test for round {cv_round} ({phase})...") # Less verbose
         X_train = add_time_features(X_train)
         X_test = add_time_features(X_test)
-        print(f"  New X_train columns count: {len(X_train.columns)}") # Less verbose logging
-        print(f"  New X_test columns count: {len(X_test.columns)}")
+        #print(f"  New X_train columns count: {len(X_train.columns)}") # Less verbose logging
+        #print(f"  New X_test columns count: {len(X_test.columns)}")
         # --- End of Adding Time Features ---
 
         # If y_train is a DataFrame with multiple columns, select the column based on target_index.
@@ -2024,10 +2024,16 @@ def main():
                         help='Run sequential optimization to find the best stacked model (will use time features)')
 
     parser.add_argument('--run-best', action='store_true',
-                        help='Run with the best previously found parameters (read from JSON file, assumes time features were used)')
+                        help='Run with the best previously found parameters (use names or read from JSON file, assumes time features were used)')
 
+    
+    parser.add_argument('--best-ebm-param-name', type=str, default=None,
+                        help='Name of the best EBM parameter set (used with --run-best, alternative to --best-params-file)')
+    parser.add_argument('--best-xgb-param-name', type=str, default=None,
+                        help='Name of the best XGBoost parameter set (used with --run-best, alternative to --best-params-file)')
     parser.add_argument('--best-params-file', type=str, default=None,
-                        help='JSON file with best parameters (required for --run-best)')
+                        help='JSON file with best parameters (used with --run-best if names are not provided)')
+    
 
     parser.add_argument('--no-parallel', action='store_true',
                         help='Disable parallel processing')
@@ -2182,7 +2188,7 @@ def main():
                             sample=args.sample,
                             only_optimize_xgb=True,
                             optimal_ebm_param_name=args.optimal_ebm_params,
-                            phase=args.phase 
+                            phase=args.phase
                         )
                     else:
                         optimize_stacked_model(
@@ -2197,81 +2203,103 @@ def main():
                             parallel=not args.no_parallel,
                             max_workers=args.max_workers,
                             sample=args.sample,
-                            phase=args.phase 
+                            phase=args.phase
                         )
                 elif args.run_best:
-                    # Run with best previously found parameters
-                    if args.best_params_file is None:
-                        print("Error: --best-params-file is required when using --run-best")
-                        return
-
-                    # Load best parameters from file
-                    try:
-                        with open(args.best_params_file, 'r') as f:
-                            best_params_all = json.load(f)
-                    except FileNotFoundError:
-                        print(f"Error: Best parameters file not found: {args.best_params_file}")
-                        continue
-                    except json.JSONDecodeError:
-                        print(f"Error: Could not decode JSON from {args.best_params_file}")
-                        continue
-
-                    # Check if parameters for this target, index, and phase exist
-                    target_key_opt = f"{target}_ind_{target_index}_optimization_results_{args.phase}.json"
-                    target_key_run = f"{target}_ind_{target_index}_{args.phase}"
-                    target_key_final_summary = f"{target}_ind_{target_index}_final_summary_{args.phase}.json"
-
-                    params_found = False
+                    
                     ebm_params = None
                     xgb_params = None
+                    source_info = ""
 
-                    # Check multiple possible structures in the JSON file
-                    if target_key_opt in best_params_all:
-                        params = best_params_all[target_key_opt]
-                        ebm_params = params.get('best_ebm_params')
-                        xgb_params = params.get('best_xgb_params')
-                        params_found = ebm_params and xgb_params
-                    elif target_key_run in best_params_all:
-                        params = best_params_all[target_key_run]
-                        ebm_params = params.get('ebm_params')
-                        xgb_params = params.get('xgb_params')
-                        params_found = ebm_params and xgb_params
-                    elif target_key_final_summary in best_params_all:
-                        params = best_params_all[target_key_final_summary]
-                        ebm_params = params.get('best_ebm_params')
-                        xgb_params = params.get('best_xgb_params')
-                        params_found = ebm_params and xgb_params
-                    elif 'best_ebm_params' in best_params_all and 'best_xgb_params' in best_params_all:
-                        # Check simpler structure, assuming it applies to the current phase
-                        ebm_params = best_params_all['best_ebm_params']
-                        xgb_params = best_params_all['best_xgb_params']
-                        params_found = True
+                    
+                    if args.best_ebm_param_name and args.best_xgb_param_name:
+                        if args.best_ebm_param_name in ebm_parameter_sets:
+                            ebm_params = ebm_parameter_sets[args.best_ebm_param_name]
+                        else:
+                            print(f"Error: EBM parameter set name '{args.best_ebm_param_name}' not found in script definitions.")
+                            continue # Skip to next target/index
 
+                        if args.best_xgb_param_name in xgb_residual_sets:
+                            xgb_params = xgb_residual_sets[args.best_xgb_param_name]
+                        else:
+                             print(f"Error: XGBoost parameter set name '{args.best_xgb_param_name}' not found in script definitions.")
+                             continue # Skip to next target/index
 
-                    if not params_found:
-                        print(f"Error: No compatible parameters found for target {target}, index {target_index}, phase {args.phase} in {args.best_params_file}")
-                        continue
+                        if ebm_params and xgb_params:
+                             source_info = f"using names '{args.best_ebm_param_name}' and '{args.best_xgb_param_name}'"
 
-                    print(f"Running with best parameters from {args.best_params_file} for {target} index {target_index}, phase {args.phase}")
-                    print(f"EBM params: {ebm_params}")
-                    print(f"XGBoost params: {xgb_params}")
+                    # Fallback to using the parameters file
+                    elif args.best_params_file:
+                         source_info = f"from file {args.best_params_file}"
+                         try:
+                            with open(args.best_params_file, 'r') as f:
+                                best_params_all = json.load(f)
+                         except FileNotFoundError:
+                             print(f"Error: Best parameters file not found: {args.best_params_file}")
+                             continue
+                         except json.JSONDecodeError:
+                             print(f"Error: Could not decode JSON from {args.best_params_file}")
+                             continue
 
-                    # Run with the best parameters
-                    run_stacked_model_with_params(
-                        target=target,
-                        ebm_params=ebm_params,
-                        xgb_params=xgb_params,
-                        start_round=args.start,
-                        end_round=args.end,
-                        step=args.step,
-                        output_dir=args.output, # Will default if None
-                        organized_dir=args.organized_dir,
-                        target_index=target_index,
-                        parallel=not args.no_parallel,
-                        max_workers=args.max_workers,
-                        sample=args.sample,
-                        phase=args.phase # Pass phase
-                    )
+                         # Try to find parameters in the loaded JSON (existing logic)
+                         target_key_opt = f"{target}_ind_{target_index}_optimization_results_{args.phase}.json"
+                         target_key_run = f"{target}_ind_{target_index}_{args.phase}"
+                         target_key_final_summary = f"{target}_ind_{target_index}_final_summary_{args.phase}.json"
+                         params_found_in_file = False
+
+                         if target_key_opt in best_params_all:
+                            params = best_params_all[target_key_opt]
+                            ebm_params = params.get('best_ebm_params')
+                            xgb_params = params.get('best_xgb_params')
+                            params_found_in_file = ebm_params and xgb_params
+                         elif target_key_run in best_params_all:
+                            params = best_params_all[target_key_run]
+                            ebm_params = params.get('ebm_params')
+                            xgb_params = params.get('xgb_params')
+                            params_found_in_file = ebm_params and xgb_params
+                         elif target_key_final_summary in best_params_all:
+                             params = best_params_all[target_key_final_summary]
+                             ebm_params = params.get('best_ebm_params')
+                             xgb_params = params.get('best_xgb_params')
+                             params_found_in_file = ebm_params and xgb_params
+                         elif 'best_ebm_params' in best_params_all and 'best_xgb_params' in best_params_all:
+                            # Check simpler structure, assuming it applies to the current phase
+                            ebm_params = best_params_all['best_ebm_params']
+                            xgb_params = best_params_all['best_xgb_params']
+                            params_found_in_file = True
+
+                         if not params_found_in_file:
+                             print(f"Error: No compatible parameters found {source_info} for target {target}, index {target_index}, phase {args.phase}")
+                             continue
+                    else:
+                        # Neither names nor file provided for --run-best
+                         print("Error: --run-best requires either --best-ebm-param-name and --best-xgb-param-name OR --best-params-file.")
+                         continue # Skip to next target/index
+
+                    # If parameters were successfully loaded (either way)
+                    if ebm_params and xgb_params:
+                        print(f"Running with best parameters {source_info} for {target} index {target_index}, phase {args.phase}")
+                        print(f"EBM params: {ebm_params}")
+                        print(f"XGBoost params: {xgb_params}")
+
+                        # Run with the best parameters
+                        run_stacked_model_with_params(
+                            target=target,
+                            ebm_params=ebm_params,
+                            xgb_params=xgb_params,
+                            start_round=args.start,
+                            end_round=args.end,
+                            step=args.step,
+                            output_dir=args.output, # Will default if None
+                            organized_dir=args.organized_dir,
+                            target_index=target_index,
+                            parallel=not args.no_parallel,
+                            max_workers=args.max_workers,
+                            sample=args.sample,
+                            phase=args.phase # Pass phase
+                        )
+                    
+
                 else:
                     # Run with default parameters (one set each)
                     print(f"Using default parameters for phase '{args.phase}' (no optimization or --run-best specified)")
@@ -2293,11 +2321,10 @@ def main():
                         parallel=not args.no_parallel,
                         max_workers=args.max_workers,
                         sample=args.sample,
-                        phase=args.phase 
+                        phase=args.phase
                     )
         except Exception as e:
             print(f"Critical error processing target {target} for phase {args.phase}: {type(e).__name__} - {str(e)}")
-            # add traceback here for debugging???
             # import traceback
             # traceback.print_exc()
 

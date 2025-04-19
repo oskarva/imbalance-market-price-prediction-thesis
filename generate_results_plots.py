@@ -315,18 +315,18 @@ def main():
     plot_performance_gain(metrics, zones, targets, dirs)
     # Load representative models
     ebm = joblib.load(ebm_model_path)
-    #xgb = joblib.load(xgb_model_path)
-    #stacked_meta = joblib.load(stacked_meta_path)
+    xgb = joblib.load(xgb_model_path)
+    stacked_meta = joblib.load(stacked_meta_path)
     # EBM explainability
     exp_data = plot_ebm_importance(ebm, dirs, representative_zone, representative_target)
     plot_ebm_shape_functions(ebm, exp_data, dirs, representative_zone, representative_target)
     plot_ebm_interactions(ebm, exp_data, dirs, representative_zone, representative_target)
     # XGBoost importance
-    #plot_xgb_importance(xgb, dirs, representative_zone, representative_target)
+    plot_xgb_importance(xgb, dirs, representative_zone, representative_target)
     # Stacked meta-learner performance & importance
     df_pred = pd.read_csv(preds_path)
     stacked_meta_performance(df_pred, dirs, representative_zone, representative_target)
-    #plot_stacked_meta_importance(stacked_meta, dirs, representative_zone, representative_target)
+    plot_stacked_meta_importance(stacked_meta, dirs, representative_zone, representative_target)
     # Time-series example and residuals
     df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target)
     plot_ebm_residuals(df_period, dirs, representative_zone, representative_target)
