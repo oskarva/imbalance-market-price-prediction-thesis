@@ -357,8 +357,10 @@ def main():
                     metrics[model][zone][target] = raw_metrics[zone][target][model]
                 except KeyError:
                     raise KeyError(f"Model '{model}' missing for zone '{zone}', target '{target}' in metrics file")
-    # Prepare output dirs
-    base = './chapters/plots/results'
+    # Prepare output dirs under a subfolder for the representative zone/target
+    base_root = './chapters/plots/results'
+    rep_folder = f"{representative_zone}_{representative_target}"
+    base = os.path.join(base_root, rep_folder)
     dirs = create_output_dirs(base)
     # Generate performance plots and tables
     plot_overall_performance(metrics, zones, targets, dirs)
