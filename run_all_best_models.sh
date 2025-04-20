@@ -7,6 +7,8 @@ set -euo pipefail
 # Python script paths
 XGB_SCRIPT=src/run_cv_with_time_features.py
 STACKED_SCRIPT=src/run_cv_stacked_with_time_features.py
+PHASE=validation
+SAMPLE=250 # REMEMBER TO UNCOMMENT LINE 57 FOR VALIDATION 
 
 # === Stacked EBM+XGB ===
 # This section uses the other script (run_cv_stacked_with_time_features.py)
@@ -41,7 +43,7 @@ for AREA in no1 no2 no3 no4 no5; do
     mkdir -p ${OUTPUT_DIR} # Ensure the directory exists
 
     python3 ${STACKED_SCRIPT} \
-      --phase validation \
+      --phase ${PHASE} \
       --targets ${AREA} \
       --target-index ${IDX} \
       --run-best \
@@ -52,7 +54,7 @@ for AREA in no1 no2 no3 no4 no5; do
        \
       --step 1 \
       --organized-dir $DATA_DIR \
-      --sample 250 \
+      #--sample 250 \ #uncomment this if validation
       #--no-parallel # uncomment if want to run in non-parallel mode
 
     # Add a small delay if needed
@@ -91,7 +93,7 @@ for AREA in no1 no2 no3 no4 no5; do
     mkdir -p ${OUTPUT_DIR} # Ensure the directory exists
 
     python3 ${XGB_SCRIPT} \
-      --phase validation \
+      --phase ${PHASE} \
       --targets ${AREA} \
       --target-index ${IDX} \
       --param-set-name ${BEST_PARAM_NAME} \
