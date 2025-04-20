@@ -115,7 +115,9 @@ def process_single_round_stacked_with_saved_model(round_num, target, target_dir,
             X_test=X_test,
             y_test=y_test,
             ebm_model=ebm_model,
-            xgb_params=xgb_params
+            xgb_params=xgb_params,
+            target=target,
+            target_index=target_index
         )
 
         # Check if we skipped this round due to errors
@@ -433,7 +435,7 @@ def train_and_evaluate_ebm(X_train, y_train, X_test, y_test, ebm_params):
             'error': str(e)
         }
 
-def train_and_evaluate_stacked(X_train, y_train, X_test, y_test, ebm_model, xgb_params):
+def train_and_evaluate_stacked(X_train, y_train, X_test, y_test, ebm_model, xgb_params, target=None, target_index=None):
     """
     Train the full stacked model (EBM + XGBoost on residuals) and evaluate.
     This assumes EBM model is already trained and X_train/X_test may have time features.
@@ -474,9 +476,20 @@ def train_and_evaluate_stacked(X_train, y_train, X_test, y_test, ebm_model, xgb_
         print(f"  Training XGBoost model on residuals with {X_train.shape[1]} features...")
         xgb_model = xgb.XGBRegressor(**xgb_params)
         xgb_model.fit(X_train, train_residuals)
-        # Save stacked model (XGBoost residual model) after training
+        # Save models (EBM and XGBoost residual) after training
         os.makedirs('models', exist_ok=True)
-        joblib.dump(xgb_model, os.path.join('models', 'stacked_last_run.joblib'), compress=3)
+        # Determine filename suffix based on target_index: up if 0, down if 1
+        if target is None:
+            raise ValueError("Cannot save models: target is None")
+        if target_index not in (0, 1):
+            raise ValueError(f"Invalid target_index {target_index}: expected 0 (up) or 1 (down)")
+        suffix = 'up' if target_index == 0 else 'down'
+        # Save EBM model
+        ebm_filename = f"ebm_last_run_{target}_{suffix}.joblib"
+        joblib.dump(ebm_model, os.path.join('models', ebm_filename), compress=3)
+        # Save stacked (XGBoost) residual model
+        xgb_filename = f"stacked_last_run_{target}_{suffix}.joblib"
+        joblib.dump(xgb_model, os.path.join('models', xgb_filename), compress=3)
 
         # Get XGBoost predictions on test data (predicting residuals)
         print(f"  Making XGBoost predictions on test set with {X_test.shape[1]} features...")
@@ -662,7 +675,9 @@ def process_single_round_stacked(round_num, target, target_dir, x_files_dir, tar
             X_test=X_test,
             y_test=y_test,
             ebm_model=ebm_model,
-            xgb_params=xgb_params
+            xgb_params=xgb_params,
+            target=target,
+            target_index=target_index
         )
 
         # Check if we skipped this round due to errors
@@ -1624,16 +1639,17 @@ def run_stacked_model_with_params(target, ebm_params, xgb_params, start_round=0,
     # Get timestamp for this run
     timestamp = time.strftime("%Y%m%d-%H%M%S")
 
-    # Create output directory, including phase
+    # Determine where to save results for this target/index
     if output_dir is None:
-        # Add _timefeat and phase to directory name
-        output_dir = f"./results/stacked_timefeat/{timestamp}_{phase}"
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Create subdirectory for this target and index, including phase
-    target_output_dir = os.path.join(output_dir, f"{target}_ind_{target_index}_{phase}")
-    os.makedirs(target_output_dir, exist_ok=True)
+        # Build default base directory with timestamp and phase
+        base_output_dir = f"./results/stacked_timefeat/{timestamp}_{phase}"
+        os.makedirs(base_output_dir, exist_ok=True)
+        target_output_dir = os.path.join(base_output_dir, f"{target}_ind_{target_index}_{phase}")
+        os.makedirs(target_output_dir, exist_ok=True)
+    else:
+        # Use provided output_dir as the target output folder
+        target_output_dir = output_dir
+        os.makedirs(target_output_dir, exist_ok=True)
 
     # Get total number of rounds for the specified phase
     total_rounds = get_cv_round_count(target_dir, phase=phase)

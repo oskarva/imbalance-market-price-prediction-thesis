@@ -239,7 +239,7 @@ def get_cv_round_count(target_dir, phase="validation"):
 
     return max(round_numbers) + 1  # +1 because we count from 0
 
-def train_and_evaluate(X_train, y_train, X_test, y_test, params):
+def train_and_evaluate(X_train, y_train, X_test, y_test, params, target=None, target_index=None):
     """
     Train model and evaluate performance with proper data cleaning.
     Assumes X_train and X_test already have necessary features (including time features).
@@ -318,7 +318,13 @@ def train_and_evaluate(X_train, y_train, X_test, y_test, params):
     model.fit(X_train_clean, y_train_vals_clean)
     # Save model after training
     os.makedirs('models', exist_ok=True)
-    joblib.dump(model, os.path.join('models', 'xgb_last_run.joblib'), compress=3)
+    # Determine model filename including target and index
+    if target is not None and target_index is not None:
+        suffix = 'up' if target_index == 0 else 'down' if target_index == 1 else f'ind_{target_index}'
+        model_filename = f"xgb_last_run_{target}_{suffix}.joblib"
+    else:
+        model_filename = 'xgb_last_run.joblib'
+    joblib.dump(model, os.path.join('models', model_filename), compress=3)
 
     # Make predictions
     print(f"  Making predictions on test set with {X_test_clean.shape[1]} features...")
@@ -485,7 +491,9 @@ def run_cv_for_target(target, start_round=0, end_round=None, step=1,
                 y_train=y_train,
                 X_test=X_test,
                 y_test=y_test,
-                params=actual_model_params # Use the determined params
+                params=actual_model_params,  # Use the determined params
+                target=target,
+                target_index=target_index
             )
 
             # Check if we skipped this round due to not enough valid data

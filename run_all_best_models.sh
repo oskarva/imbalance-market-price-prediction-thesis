@@ -8,53 +8,6 @@ set -euo pipefail
 XGB_SCRIPT=src/run_cv_with_time_features.py
 STACKED_SCRIPT=src/run_cv_stacked_with_time_features.py
 
-# === XGBoost‐only (Using Predefined Parameter Set Names) ===
-echo "--- Running  XGBoost-only (Best Params by Name) ---"
-
-# Define the best XGBoost parameter set name for each target/index combination
-declare -A XGB_BEST_SET=(
-  ["no1_0"]="set5_ensemble_diverse" ["no1_1"]="set1_robust"
-  ["no2_0"]="set1_robust"           ["no2_1"]="set2_regularized"
-  ["no3_0"]="set1_robust"           ["no3_1"]="set1_robust"
-  ["no4_0"]="set1_robust"           ["no4_1"]="set1_robust"
-  ["no5_0"]="set1_robust"           ["no5_1"]="set5_ensemble_diverse" 
-)
-
-for AREA in no1 no2 no3 no4 no5; do
-  for IDX in 0 1; do
-    KEY="${AREA}_${IDX}"
-    if [[ ! -v XGB_BEST_SET[$KEY] ]]; then
-        echo "Warning: No best XGB parameter set defined for ${KEY}. Skipping."
-        continue
-    fi
-    BEST_PARAM_NAME=${XGB_BEST_SET[$KEY]}
-
-    echo "=== XGBoost only: ${AREA} index ${IDX} (Set: ${BEST_PARAM_NAME}) ==="
-
-    # Define output directory for this run
-    OUTPUT_DIR="./results/xgboost_best/${AREA}_${IDX}"
-    mkdir -p ${OUTPUT_DIR} # Ensure the directory exists
-
-    python3 ${XGB_SCRIPT} \
-      --phase validation \
-      --targets ${AREA} \
-      --target-index ${IDX} \
-      --param-set-name ${BEST_PARAM_NAME} \
-      --output ${OUTPUT_DIR} \
-      --start 0 \
-       \
-      --step 1 \
-      --organized-dir $DATA_DIR
-
-    # Add a small delay if needed
-    # sleep 1
-  done
-done
-echo "--- Finished Section 1 ---"
-echo
-
-
-
 # === Stacked EBM+XGB ===
 # This section uses the other script (run_cv_stacked_with_time_features.py)
 # and remains unchanged from the previous version.
@@ -99,13 +52,58 @@ for AREA in no1 no2 no3 no4 no5; do
        \
       --step 1 \
       --organized-dir $DATA_DIR \
+      --sample 250 \
       #--no-parallel # uncomment if want to run in non-parallel mode
 
     # Add a small delay if needed
     # sleep 2
   done
 done
-echo "--- Finished Section 3 ---"
+echo "--- Finished Section Stacked ---"
 echo
 
-echo "=== All Sections Complete ==="
+
+# === XGBoost‐only (Using Predefined Parameter Set Names) ===
+echo "--- Running  XGBoost-only (Best Params by Name) ---"
+
+# Define the best XGBoost parameter set name for each target/index combination
+declare -A XGB_BEST_SET=(
+  ["no1_0"]="set5_ensemble_diverse" ["no1_1"]="set1_robust"
+  ["no2_0"]="set1_robust"           ["no2_1"]="set2_regularized"
+  ["no3_0"]="set1_robust"           ["no3_1"]="set1_robust"
+  ["no4_0"]="set1_robust"           ["no4_1"]="set1_robust"
+  ["no5_0"]="set1_robust"           ["no5_1"]="set5_ensemble_diverse" 
+)
+
+for AREA in no1 no2 no3 no4 no5; do
+  for IDX in 0 1; do
+    KEY="${AREA}_${IDX}"
+    if [[ ! -v XGB_BEST_SET[$KEY] ]]; then
+        echo "Warning: No best XGB parameter set defined for ${KEY}. Skipping."
+        continue
+    fi
+    BEST_PARAM_NAME=${XGB_BEST_SET[$KEY]}
+
+    echo "=== XGBoost only: ${AREA} index ${IDX} (Set: ${BEST_PARAM_NAME}) ==="
+
+    # Define output directory for this run
+    OUTPUT_DIR="./results/xgboost_best/${AREA}_${IDX}"
+    mkdir -p ${OUTPUT_DIR} # Ensure the directory exists
+
+    python3 ${XGB_SCRIPT} \
+      --phase validation \
+      --targets ${AREA} \
+      --target-index ${IDX} \
+      --param-set-name ${BEST_PARAM_NAME} \
+      --output ${OUTPUT_DIR} \
+      --organized-dir $DATA_DIR
+
+    # Add a small delay if needed
+    # sleep 1
+  done
+done
+echo "--- Finished Section XGB ---"
+echo
+
+
+

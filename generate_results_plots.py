@@ -274,15 +274,15 @@ def plot_ebm_residuals(df_p, dirs, zone, target):
 
 def main():
     # Configurable representative case
-    representative_zone = 'NO1'
-    representative_target = 'up'
+    representative_zone = 'NO1'.lower()
+    representative_target = 'up'.lower()
     # Paths
     metrics_path = './results/test_set_metrics.json'
     preds_path = f'./results/predictions/{representative_zone}_{representative_target}_predictions.csv'
     # Paths to the final-fold models (replace .joblib with .pkl if needed)
-    ebm_model_path = f'./models/ebm/{representative_zone}_{representative_target}_ebm.joblib'
-    xgb_model_path = f'./models/xgb/{representative_zone}_{representative_target}_xgb.joblib'
-    stacked_meta_path = f'./models/stacked/{representative_zone}_{representative_target}_stacked_meta.joblib'
+    ebm_model_path = f'./models/ebm_last_run_{representative_zone}_{representative_target}.joblib'
+    xgb_model_path = f'./models/xgb_last_run_{representative_zone}_{representative_target}.joblib'
+    stacked_meta_path = f'./models/stacked_last_run_{representative_zone}_{representative_target}.joblib'
     # Load metrics and determine models, zones, targets from JSON structure
     raw_metrics = load_metrics(metrics_path)
     # raw_metrics[zone][target][model] = metrics
@@ -324,12 +324,12 @@ def main():
     # XGBoost importance
     plot_xgb_importance(xgb, dirs, representative_zone, representative_target)
     # Stacked meta-learner performance & importance
-    df_pred = pd.read_csv(preds_path)
-    stacked_meta_performance(df_pred, dirs, representative_zone, representative_target)
+    #df_pred = pd.read_csv(preds_path)
+    #stacked_meta_performance(df_pred, dirs, representative_zone, representative_target)
     plot_stacked_meta_importance(stacked_meta, dirs, representative_zone, representative_target)
     # Time-series example and residuals
-    df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target)
-    plot_ebm_residuals(df_period, dirs, representative_zone, representative_target)
+    #df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target)
+    #plot_ebm_residuals(df_period, dirs, representative_zone, representative_target)
     print('All plots and tables saved to', base)
 
 if __name__ == '__main__':
