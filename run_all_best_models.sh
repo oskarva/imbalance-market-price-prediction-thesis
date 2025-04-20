@@ -7,7 +7,7 @@ set -euo pipefail
 # Python script paths
 XGB_SCRIPT=src/run_cv_with_time_features.py
 STACKED_SCRIPT=src/run_cv_stacked_with_time_features.py
-PHASE=validation
+PHASE=validation #IF TEST: COMMENT OUT LINE 57
 SAMPLE=250 # REMEMBER TO UNCOMMENT LINE 57 FOR VALIDATION 
 
 # === Stacked EBM+XGB ===
@@ -54,7 +54,7 @@ for AREA in no1 no2 no3 no4 no5; do
        \
       --step 1 \
       --organized-dir $DATA_DIR \
-      #--sample 250 \ #uncomment this if validation
+      --sample 250 \ #comment this out if test
       #--no-parallel # uncomment if want to run in non-parallel mode
 
     # Add a small delay if needed
