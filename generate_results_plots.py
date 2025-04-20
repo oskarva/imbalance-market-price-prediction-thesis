@@ -358,7 +358,7 @@ def main():
                 except KeyError:
                     raise KeyError(f"Model '{model}' missing for zone '{zone}', target '{target}' in metrics file")
     # Prepare output dirs under a subfolder for the representative zone/target
-    base_root = './chapters/plots/results'
+    base_root = './chapters/plots'
     rep_folder = f"{representative_zone}_{representative_target}"
     base = os.path.join(base_root, rep_folder)
     dirs = create_output_dirs(base)
