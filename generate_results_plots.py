@@ -1,11 +1,9 @@
-#!/usr/bin/env python3
-# generate_results_plots.py
-#
 # Script to generate plots and tables for Chapter 4 (Results) of the thesis.
 import os
 import json
 import numpy as np
 import pandas as pd
+import re
 import matplotlib.pyplot as plt
 import seaborn as sns
 import joblib
@@ -137,16 +135,33 @@ def plot_ebm_shape_functions(ebm, exp_data, dirs, zone, target, top_n=7):
     uni = sorted(uni, key=lambda x: x[1], reverse=True)[:top_n]
     for i, _ in uni:
         fidx = term_features[i][0]
-        edges = bin_edges[fidx]
-        mids = (edges[:-1] + edges[1:]) / 2
-        ys = term_scores[i]
+        # Ensure bin edges are a flat numpy array
+        edges_arr = np.asarray(bin_edges[fidx])
+        if edges_arr.ndim > 1:
+            edges_arr = edges_arr.flatten()
+        # Need at least two edges to compute mids
+        if edges_arr.size < 2:
+            print(f"Warning: Not enough bin edges for feature '{names[fidx]}', skipping shape plot.")
+            continue
+        mids = (edges_arr[:-1] + edges_arr[1:]) / 2
+        ys_arr = np.asarray(term_scores[i])
+        # Align lengths
+        L = min(len(mids), len(ys_arr))
+        if L == 0:
+            print(f"Warning: Empty values for feature '{names[fidx]}', skipping shape plot.")
+            continue
+        mids = mids[:L]
+        ys_arr = ys_arr[:L]
         plt.figure(figsize=(8, 4))
-        plt.plot(mids, ys, marker='o')
+        plt.plot(mids, ys_arr, marker='o')
         plt.title(f'Shape: {names[i]} ({zone} {target})')
         plt.xlabel(names[i])
         plt.ylabel('f(x)')
         plt.tight_layout()
+        # Sanitize feature name for filename
         fn = names[i].replace(' ', '_')
+        # Replace any non-alphanumeric, non _ . - characters with underscore
+        fn = re.sub(r'[^A-Za-z0-9_.-]', '_', fn)
         plt.savefig(os.path.join(dirs['ebm'], f'ebm_shape_{fn}_{zone}_{target}.png'))
         plt.close()
 
@@ -171,18 +186,34 @@ def plot_ebm_interactions(ebm, exp_data, dirs, zone, target, top_n=2):
     inter = sorted(inter, key=lambda x: x[1], reverse=True)[:top_n]
     for i, _ in inter:
         f1, f2 = term_features[i]
-        e1 = bin_edges[f1]
-        e2 = bin_edges[f2]
+        # Ensure bin edges are flat numpy arrays
+        e1 = np.asarray(bin_edges[f1])
+        e2 = np.asarray(bin_edges[f2])
+        if e1.ndim > 1:
+            e1 = e1.flatten()
+        if e2.ndim > 1:
+            e2 = e2.flatten()
+        # Need at least two edges for each
+        if e1.size < 2 or e2.size < 2:
+            print(f"Warning: Not enough bin edges for interaction term '{names[i]}', skipping.")
+            continue
         m1 = (e1[:-1] + e1[1:]) / 2
         m2 = (e2[:-1] + e2[1:]) / 2
-        Z = term_scores[i]
+        Z_arr = np.asarray(term_scores[i])
+        # Check shape alignment
+        if Z_arr.ndim != 2 or Z_arr.shape != (len(m1), len(m2)):
+            print(f"Warning: Interaction shape mismatch for term '{names[i]}': Z shape {Z_arr.shape}, expected ({len(m1)},{len(m2)}). Skipping.")
+            continue
         plt.figure(figsize=(6, 5))
-        sns.heatmap(Z, xticklabels=np.round(m2, 2), yticklabels=np.round(m1, 2), cmap='coolwarm')
+        sns.heatmap(Z_arr, xticklabels=np.round(m2, 2), yticklabels=np.round(m1, 2), cmap='coolwarm')
         plt.title(f'Interaction: {names[i]} ({zone} {target})')
         plt.xlabel(f'Feat {f2}')
         plt.ylabel(f'Feat {f1}')
         plt.tight_layout()
+        # Sanitize interaction name for filename
         fn = names[i].replace(' ', '_')
+        # Replace any non-alphanumeric, non _ . - characters with underscore
+        fn = re.sub(r'[^A-Za-z0-9_.-]', '_', fn)
         plt.savefig(os.path.join(dirs['ebm'], f'ebm_inter_{fn}_{zone}_{target}.png'))
         plt.close()
 
