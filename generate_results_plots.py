@@ -259,8 +259,8 @@ def plot_xgb_importance(xgb_model, dirs, zone, target, top_n=10):
 def stacked_meta_performance(df, dirs, zone, target):
     # Metrics for meta-learner predicting EBM residuals
     actual = df['actual']
-    ebm_pred = df['ebm']
-    stacked_pred = df['stacked']
+    ebm_pred = df['ebm_pred']
+    stacked_pred = df['predicted']
     res_act = actual - ebm_pred
     res_pred = stacked_pred - ebm_pred
     mae = mean_absolute_error(res_act, res_pred)
@@ -300,9 +300,8 @@ def plot_time_series(df, dirs, zone, target, start_date=None, days=7):
     df_p = df.loc[mask]
     plt.figure(figsize=(12, 6))
     plt.plot(df_p['timestamp'], df_p['actual'], label='Actual')
-    plt.plot(df_p['timestamp'], df_p['ebm'], label='EBM')
-    plt.plot(df_p['timestamp'], df_p['xgb'], label='XGBoost')
-    plt.plot(df_p['timestamp'], df_p['stacked'], label='Stacked')
+    plt.plot(df_p['timestamp'], df_p['ebm_pred'], label='EBM')
+    plt.plot(df_p['timestamp'], df_p['predicted'], label='Stacked')
     plt.legend()
     plt.title(f'Actual vs Predictions ({zone} {target})')
     plt.xlabel('Time')
@@ -314,7 +313,7 @@ def plot_time_series(df, dirs, zone, target, start_date=None, days=7):
 
 def plot_ebm_residuals(df_p, dirs, zone, target):
     # Residuals of EBM over the period
-    resid = df_p['actual'] - df_p['ebm']
+    resid = df_p['actual'] - df_p['ebm_pred']
     plt.figure(figsize=(12, 4))
     plt.plot(df_p['timestamp'], resid)
     plt.title(f'EBM Residuals ({zone} {target})')
@@ -381,12 +380,12 @@ def main():
     # XGBoost importance
     plot_xgb_importance(xgb, dirs, representative_zone, representative_target)
     # Stacked meta-learner performance & importance
-    #df_pred = pd.read_csv(preds_path)
-    #stacked_meta_performance(df_pred, dirs, representative_zone, representative_target)
+    df_pred = pd.read_csv(preds_path)
+    stacked_meta_performance(df_pred, dirs, representative_zone, representative_target)
     plot_stacked_meta_importance(stacked_meta, dirs, representative_zone, representative_target)
     # Time-series example and residuals
-    #df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target)
-    #plot_ebm_residuals(df_period, dirs, representative_zone, representative_target)
+    df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target)
+    plot_ebm_residuals(df_period, dirs, representative_zone, representative_target)
     print('All plots and tables saved to', base)
 
 if __name__ == '__main__':
