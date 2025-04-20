@@ -114,7 +114,7 @@ def plot_ebm_importance(ebm, dirs, zone, target, top_n=10):
     plt.close()
     return data
 
-def plot_ebm_shape_functions(ebm, exp_data, dirs, zone, target, top_n=7):
+def plot_ebm_shape_functions(ebm, exp_data, dirs, zone, target, top_n=7, bottom_n=0):
     # Univariate shape functions for top terms
     # Retrieve bin edges and term information; handle attribute naming differences
     try:
@@ -131,9 +131,30 @@ def plot_ebm_shape_functions(ebm, exp_data, dirs, zone, target, top_n=7):
         raise RuntimeError("EBM model missing term_scores_ or term_features_ attributes") from e
     names = exp_data['names']
     scores = exp_data['scores']
-    uni = [(i, s) for i, s in enumerate(scores) if len(term_features[i]) == 1]
-    uni = sorted(uni, key=lambda x: x[1], reverse=True)[:top_n]
-    for i, _ in uni:
+    # Identify all univariate terms (single-feature)
+    all_uni = [(i, s) for i, s in enumerate(scores) if len(term_features[i]) == 1]
+    # Sort by importance descending
+    uni_sorted = sorted(all_uni, key=lambda x: x[1], reverse=True)
+    # Select top_n most important univariates
+    if top_n is None or top_n >= len(uni_sorted):
+        top_uni = uni_sorted
+    else:
+        top_uni = uni_sorted[:top_n]
+    # Select bottom_n least important univariates
+    bottom_uni = []
+    if bottom_n:
+        if bottom_n >= len(uni_sorted):
+            bottom_uni = uni_sorted
+        else:
+            bottom_uni = uni_sorted[-bottom_n:]
+    # Combine selections (top first, then bottom, avoiding duplicates)
+    selected = top_uni.copy()
+    top_indices = {i for i, _ in top_uni}
+    for i_s in bottom_uni:
+        if i_s[0] not in top_indices:
+            selected.append(i_s)
+    # Plot each selected univariate shape
+    for i, _ in selected:
         fidx = term_features[i][0]
         # Ensure bin edges are a flat numpy array
         edges_arr = np.asarray(bin_edges[fidx])
@@ -350,7 +371,12 @@ def main():
     stacked_meta = joblib.load(stacked_meta_path)
     # EBM explainability
     exp_data = plot_ebm_importance(ebm, dirs, representative_zone, representative_target)
-    plot_ebm_shape_functions(ebm, exp_data, dirs, representative_zone, representative_target)
+    # Plot all univariate shape functions for EBM
+    plot_ebm_shape_functions(
+        ebm, exp_data, dirs,
+        representative_zone, representative_target,
+        top_n=None
+    )
     plot_ebm_interactions(ebm, exp_data, dirs, representative_zone, representative_target)
     # XGBoost importance
     plot_xgb_importance(xgb, dirs, representative_zone, representative_target)
