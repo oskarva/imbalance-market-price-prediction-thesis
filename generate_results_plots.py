@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import joblib
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+DATASET = None
 from interpret.glassbox import ExplainableBoostingRegressor
 
 def load_metrics(metrics_path):
@@ -41,11 +43,11 @@ def plot_overall_performance(metrics, zones, targets, dirs):
         fig, axes = plt.subplots(1, 3, figsize=(15, 5))
         for ax, metric in zip(axes, ['R2', 'MAE', 'RMSE']):
             sns.barplot(x=df.index, y=df[metric], ax=ax)
-            ax.set_title(f"{metric} for {target.capitalize()} (avg over zones)")
+            ax.set_title(f"{metric} for {target.capitalize()} (avg over zones, {DATASET})")
             ax.set_xlabel('Model')
             ax.set_ylabel(metric)
         plt.tight_layout()
-        plt.savefig(os.path.join(dirs['performance'], f'overall_performance_{target}.png'))
+        plt.savefig(os.path.join(dirs['performance'], f'overall_performance_{target}_{DATASET}.png'))
         plt.close()
 
 def save_detailed_tables(metrics, zones, targets, dirs):
@@ -60,9 +62,9 @@ def save_detailed_tables(metrics, zones, targets, dirs):
                 df.loc[zone, (model, 'RMSE')] = vals['RMSE']
                 df.loc[zone, (model, 'R2')] = vals['R2']
         df = df.sort_index(axis=1)
-        csv_path = os.path.join(dirs['detailed_tables'], f'detailed_metrics_{target}.csv')
+        csv_path = os.path.join(dirs['detailed_tables'], f'detailed_metrics_{target}_{DATASET}.csv')
         df.to_csv(csv_path)
-        with open(os.path.join(dirs['detailed_tables'], f'detailed_metrics_{target}.md'), 'w') as f:
+        with open(os.path.join(dirs['detailed_tables'], f'detailed_metrics_{target}_{DATASET}.md'), 'w') as f:
             f.write(df.to_markdown())
 
 def plot_performance_gain(metrics, zones, targets, dirs):
@@ -93,11 +95,11 @@ def plot_performance_gain(metrics, zones, targets, dirs):
         df = pd.DataFrame(gain).T
         fig, ax = plt.subplots(figsize=(8, 6))
         df.plot(kind='bar', ax=ax)
-        ax.set_title(f"% Improvement over {baseline_key} for {target.capitalize()}")
+        ax.set_title(f"% Improvement over {baseline_key} for {target.capitalize()} ({DATASET})")
         ax.set_ylabel('% Improvement')
         ax.set_xlabel('Model')
         plt.tight_layout()
-        plt.savefig(os.path.join(dirs['performance'], f'performance_gain_{target}.png'))
+        plt.savefig(os.path.join(dirs['performance'], f'performance_gain_{target}_{DATASET}.png'))
         plt.close()
 
 def plot_ebm_importance(ebm, dirs, zone, target, top_n=10):
@@ -108,9 +110,9 @@ def plot_ebm_importance(ebm, dirs, zone, target, top_n=10):
     df = df.sort_values('importance', ascending=False).head(top_n)
     plt.figure(figsize=(10, 6))
     sns.barplot(x='importance', y='feature', data=df, palette='viridis')
-    plt.title(f'EBM Global Feature Importance ({zone} {target})')
+    plt.title(f'EBM Global Feature Importance ({zone} {target}, {DATASET})')
     plt.tight_layout()
-    plt.savefig(os.path.join(dirs['ebm'], f'ebm_global_importance_{zone}_{target}.png'))
+    plt.savefig(os.path.join(dirs['ebm'], f'ebm_global_importance_{zone}_{target}_{DATASET}.png'))
     plt.close()
     return data
 
@@ -175,7 +177,7 @@ def plot_ebm_shape_functions(ebm, exp_data, dirs, zone, target, top_n=7, bottom_
         ys_arr = ys_arr[:L]
         plt.figure(figsize=(8, 4))
         plt.plot(mids, ys_arr, marker='o')
-        plt.title(f'Shape: {names[i]} ({zone} {target})')
+        plt.title(f'Shape: {names[i]} ({zone} {target}, {DATASET})')
         plt.xlabel(names[i])
         plt.ylabel('f(x)')
         plt.tight_layout()
@@ -183,7 +185,7 @@ def plot_ebm_shape_functions(ebm, exp_data, dirs, zone, target, top_n=7, bottom_
         fn = names[i].replace(' ', '_')
         # Replace any non-alphanumeric, non _ . - characters with underscore
         fn = re.sub(r'[^A-Za-z0-9_.-]', '_', fn)
-        plt.savefig(os.path.join(dirs['ebm'], f'ebm_shape_{fn}_{zone}_{target}.png'))
+        plt.savefig(os.path.join(dirs['ebm'], f'ebm_shape_{fn}_{zone}_{target}_{DATASET}.png'))
         plt.close()
 
 def plot_ebm_interactions(ebm, exp_data, dirs, zone, target, top_n=2):
@@ -227,7 +229,7 @@ def plot_ebm_interactions(ebm, exp_data, dirs, zone, target, top_n=2):
             continue
         plt.figure(figsize=(6, 5))
         sns.heatmap(Z_arr, xticklabels=np.round(m2, 2), yticklabels=np.round(m1, 2), cmap='coolwarm')
-        plt.title(f'Interaction: {names[i]} ({zone} {target})')
+        plt.title(f'Interaction: {names[i]} ({zone} {target}, {DATASET})')
         plt.xlabel(f'Feat {f2}')
         plt.ylabel(f'Feat {f1}')
         plt.tight_layout()
@@ -235,7 +237,7 @@ def plot_ebm_interactions(ebm, exp_data, dirs, zone, target, top_n=2):
         fn = names[i].replace(' ', '_')
         # Replace any non-alphanumeric, non _ . - characters with underscore
         fn = re.sub(r'[^A-Za-z0-9_.-]', '_', fn)
-        plt.savefig(os.path.join(dirs['ebm'], f'ebm_inter_{fn}_{zone}_{target}.png'))
+        plt.savefig(os.path.join(dirs['ebm'], f'ebm_inter_{fn}_{zone}_{target}_{DATASET}.png'))
         plt.close()
 
 def plot_xgb_importance(xgb_model, dirs, zone, target, top_n=10):
@@ -251,9 +253,9 @@ def plot_xgb_importance(xgb_model, dirs, zone, target, top_n=10):
     df = pd.DataFrame({'feature': names, 'importance': scores})
     plt.figure(figsize=(10, 6))
     sns.barplot(x='importance', y='feature', data=df, palette='magma')
-    plt.title(f'XGBoost Importance ({zone} {target})')
+    plt.title(f'XGBoost Importance ({zone} {target}, {DATASET})')
     plt.tight_layout()
-    plt.savefig(os.path.join(dirs['xgb'], f'xgb_import_{zone}_{target}.png'))
+    plt.savefig(os.path.join(dirs['xgb'], f'xgb_import_{zone}_{target}_{DATASET}.png'))
     plt.close()
 
 def stacked_meta_performance(df, dirs, zone, target):
@@ -267,9 +269,9 @@ def stacked_meta_performance(df, dirs, zone, target):
     rmse = np.sqrt(mean_squared_error(res_act, res_pred))
     r2 = r2_score(res_act, res_pred)
     out = f"MAE: {mae:.3f}\nRMSE: {rmse:.3f}\nR2: {r2:.3f}\n"
-    with open(os.path.join(dirs['stacked'], f'meta_perf_{zone}_{target}.txt'), 'w') as f:
+    with open(os.path.join(dirs['stacked'], f'meta_perf_{zone}_{target}_{DATASET}.txt'), 'w') as f:
         f.write(out)
-    print(f"Meta-learner performance ({zone} {target}): {out}")
+    print(f"Meta-learner performance ({zone} {target}, {DATASET}): {out}")
     return res_act, res_pred
 
 def plot_stacked_meta_importance(meta_model, dirs, zone, target, top_n=10):
@@ -285,9 +287,9 @@ def plot_stacked_meta_importance(meta_model, dirs, zone, target, top_n=10):
     df = pd.DataFrame({'feature': names, 'importance': scores})
     plt.figure(figsize=(10, 6))
     sns.barplot(x='importance', y='feature', data=df, palette='plasma')
-    plt.title(f'Meta-learner Importance ({zone} {target})')
+    plt.title(f'Meta-learner Importance ({zone} {target}, {DATASET})')
     plt.tight_layout()
-    plt.savefig(os.path.join(dirs['stacked'], f'meta_import_{zone}_{target}.png'))
+    plt.savefig(os.path.join(dirs['stacked'], f'meta_import_{zone}_{target}_{DATASET}.png'))
     plt.close()
 
 def plot_time_series(df, dirs, zone, target, start_date=None, days=7):
@@ -311,13 +313,13 @@ def plot_time_series(df, dirs, zone, target, start_date=None, days=7):
     if 'naive_pred' in df_p.columns:
         plt.plot(df_p['timestamp'], df_p['naive_pred'], label='Naive')
     plt.legend()
-    plt.title(f'Actual vs Predictions ({zone} {target})')
+    plt.title(f'Actual vs Predictions ({zone} {target}, {DATASET})')
     plt.xlabel('Time')
     plt.ylabel('Value')
     plt.tight_layout()
     # Include start date in filename to avoid overwriting
     date_str = start_dt.strftime('%Y%m%d')
-    filename = f'time_series_{zone}_{target}_{date_str}.png'
+    filename = f'time_series_{zone}_{target}_{date_str}_{DATASET}.png'
     plt.savefig(os.path.join(dirs['timeseries'], filename))
     plt.close()
     return df_p
@@ -327,11 +329,11 @@ def plot_ebm_residuals(df_p, dirs, zone, target):
     resid = df_p['actual'] - df_p['ebm_pred']
     plt.figure(figsize=(12, 4))
     plt.plot(df_p['timestamp'], resid)
-    plt.title(f'EBM Residuals ({zone} {target})')
+    plt.title(f'EBM Residuals ({zone} {target}, {DATASET})')
     plt.xlabel('Time')
     plt.ylabel('Residual')
     plt.tight_layout()
-    plt.savefig(os.path.join(dirs['timeseries'], f'residuals_{zone}_{target}.png'))
+    plt.savefig(os.path.join(dirs['timeseries'], f'residuals_{zone}_{target}_{DATASET}.png'))
     plt.close()
 
 def main():
@@ -341,6 +343,9 @@ def main():
     TEST = "test"
     VALIDATION = "validation"
     val_or_test = VALIDATION
+    # Set global dataset identifier for titles and filenames
+    global DATASET
+    DATASET = val_or_test
     # Paths
     metrics_path = f'./results/{val_or_test}_set_metrics.json'
     preds_path = f'./results/predictions/{val_or_test}/{representative_zone}_{representative_target}_predictions.csv'
