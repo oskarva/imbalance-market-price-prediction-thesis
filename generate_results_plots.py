@@ -293,21 +293,32 @@ def plot_stacked_meta_importance(meta_model, dirs, zone, target, top_n=10):
 def plot_time_series(df, dirs, zone, target, start_date=None, days=7):
     # Actual vs predicted over a short period
     df['timestamp'] = pd.to_datetime(df['timestamp'])
+    # Determine start datetime for the series
     if start_date is None:
-        start_date = df['timestamp'].min()
-    end_date = start_date + pd.Timedelta(days=days)
-    mask = (df['timestamp'] >= start_date) & (df['timestamp'] < end_date)
+        start_dt = df['timestamp'].min()
+    else:
+        start_dt = pd.to_datetime(start_date)
+    end_dt = start_dt + pd.Timedelta(days=days)
+    mask = (df['timestamp'] >= start_dt) & (df['timestamp'] < end_dt)
     df_p = df.loc[mask]
     plt.figure(figsize=(12, 6))
     plt.plot(df_p['timestamp'], df_p['actual'], label='Actual')
     plt.plot(df_p['timestamp'], df_p['ebm_pred'], label='EBM')
     plt.plot(df_p['timestamp'], df_p['predicted'], label='Stacked')
+    # Plot XGBoost and Naive predictions if available
+    if 'xgb_pred' in df_p.columns:
+        plt.plot(df_p['timestamp'], df_p['xgb_pred'], label='XGBoost')
+    if 'naive_pred' in df_p.columns:
+        plt.plot(df_p['timestamp'], df_p['naive_pred'], label='Naive')
     plt.legend()
     plt.title(f'Actual vs Predictions ({zone} {target})')
     plt.xlabel('Time')
     plt.ylabel('Value')
     plt.tight_layout()
-    plt.savefig(os.path.join(dirs['timeseries'], f'time_series_{zone}_{target}.png'))
+    # Include start date in filename to avoid overwriting
+    date_str = start_dt.strftime('%Y%m%d')
+    filename = f'time_series_{zone}_{target}_{date_str}.png'
+    plt.savefig(os.path.join(dirs['timeseries'], filename))
     plt.close()
     return df_p
 
@@ -386,6 +397,26 @@ def main():
     plot_xgb_importance(xgb, dirs, representative_zone, representative_target)
     # Stacked meta-learner performance & importance
     df_pred = pd.read_csv(preds_path)
+    # Load additional model predictions (XGBoost and Naive) for time series plots
+    # Derive file paths based on the stacked predictions path
+    xgb_preds_path = preds_path.replace('_predictions.csv', '_xgb_predictions.csv')
+    if os.path.exists(xgb_preds_path):
+        df_xgb = pd.read_csv(xgb_preds_path)
+        df_pred = df_pred.merge(
+            df_xgb[['timestamp', 'predicted']], on='timestamp', how='left', suffixes=('', '_xgb')
+        )
+        df_pred.rename(columns={'predicted_xgb': 'xgb_pred'}, inplace=True)
+    else:
+        print(f"Warning: XGBoost predictions file not found: {xgb_preds_path}")
+    naive_preds_path = preds_path.replace('_predictions.csv', '_naive_predictions.csv')
+    if os.path.exists(naive_preds_path):
+        df_naive = pd.read_csv(naive_preds_path)
+        df_pred = df_pred.merge(
+            df_naive[['timestamp', 'predicted']], on='timestamp', how='left', suffixes=('', '_naive')
+        )
+        df_pred.rename(columns={'predicted_naive': 'naive_pred'}, inplace=True)
+    else:
+        print(f"Warning: Naive predictions file not found: {naive_preds_path}")
     stacked_meta_performance(df_pred, dirs, representative_zone, representative_target)
     plot_stacked_meta_importance(stacked_meta, dirs, representative_zone, representative_target)
     # Time-series example and residuals
