@@ -432,7 +432,7 @@ def main():
         df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target, start_date="2025-03-01", days=15)
 
 
-        plot_ebm_residuals(df_period, dirs, representative_zone, representative_target)
+        #plot_ebm_residuals(df_period, dirs, representative_zone, representative_target)
     print('All plots and tables saved to', base)
 
 if __name__ == '__main__':
