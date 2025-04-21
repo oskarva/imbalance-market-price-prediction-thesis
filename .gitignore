@@ -26,4 +26,9 @@ src/data/organized/
 src/data/extracted
 
 # Results (because it contains raw data)
-results/
+results/naive/
+results/predictions/
+results/stacked_best/
+results/stacked_optimization_timefeat/
+results/xgboost_best/
+results/xgboost_timefeat_optimize
