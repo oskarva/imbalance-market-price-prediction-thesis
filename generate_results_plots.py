@@ -327,13 +327,16 @@ def main():
     # Configurable representative case
     representative_zone = 'NO1'.lower()
     representative_target = 'up'.lower()
+    TEST = "test"
+    VALIDATION = "validation"
+    val_or_test = VALIDATION
     # Paths
-    metrics_path = './results/test_set_metrics.json'
-    preds_path = f'./results/predictions/{representative_zone}_{representative_target}_predictions.csv'
+    metrics_path = f'./results/{val_or_test}_set_metrics.json'
+    preds_path = f'./results/predictions/{val_or_test}/{representative_zone}_{representative_target}_predictions.csv'
     # Paths to the final-fold models (replace .joblib with .pkl if needed)
-    ebm_model_path = f'./models/ebm_last_run_{representative_zone}_{representative_target}.joblib'
-    xgb_model_path = f'./models/xgb_last_run_{representative_zone}_{representative_target}.joblib'
-    stacked_meta_path = f'./models/stacked_last_run_{representative_zone}_{representative_target}.joblib'
+    ebm_model_path = f'./models/{val_or_test}/ebm_last_run_{representative_zone}_{representative_target}.joblib'
+    xgb_model_path = f'./models/{val_or_test}/xgb_last_run_{representative_zone}_{representative_target}.joblib'
+    stacked_meta_path = f'./models/{val_or_test}/stacked_last_run_{representative_zone}_{representative_target}.joblib'
     # Load metrics and determine models, zones, targets from JSON structure
     raw_metrics = load_metrics(metrics_path)
     # raw_metrics[zone][target][model] = metrics
@@ -358,7 +361,7 @@ def main():
                 except KeyError:
                     raise KeyError(f"Model '{model}' missing for zone '{zone}', target '{target}' in metrics file")
     # Prepare output dirs under a subfolder for the representative zone/target
-    base_root = './chapters/plots'
+    base_root = f'./chapters/{val_or_test}/plots'
     rep_folder = f"{representative_zone}_{representative_target}"
     base = os.path.join(base_root, rep_folder)
     dirs = create_output_dirs(base)
@@ -386,8 +389,14 @@ def main():
     stacked_meta_performance(df_pred, dirs, representative_zone, representative_target)
     plot_stacked_meta_importance(stacked_meta, dirs, representative_zone, representative_target)
     # Time-series example and residuals
-    df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target)
-    plot_ebm_residuals(df_period, dirs, representative_zone, representative_target)
+    if val_or_test == TEST:
+        df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target, start_date="2024-07-01", days=31)
+        df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target, start_date="2025-10-01", days=31)
+        df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target, start_date="2025-01-01", days=31)
+        df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target, start_date="2025-03-01", days=15)
+
+
+        plot_ebm_residuals(df_period, dirs, representative_zone, representative_target)
     print('All plots and tables saved to', base)
 
 if __name__ == '__main__':
