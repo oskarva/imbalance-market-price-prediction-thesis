@@ -294,12 +294,19 @@ def plot_stacked_meta_importance(meta_model, dirs, zone, target, top_n=10):
 
 def plot_time_series(df, dirs, zone, target, start_date=None, days=7):
     # Actual vs predicted over a short period
+    # Ensure timestamps are parsed as datetimes (may be tz-aware)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
+    # Capture timezone info if present for later alignment
+    tz = df['timestamp'].dt.tz
     # Determine start datetime for the series
     if start_date is None:
         start_dt = df['timestamp'].min()
     else:
         start_dt = pd.to_datetime(start_date)
+    # If timestamps are tz-aware and start_dt is naive, localize to match
+    if tz is not None and start_dt.tzinfo is None:
+        start_dt = start_dt.tz_localize(tz)
+    # Compute end datetime relative to start
     end_dt = start_dt + pd.Timedelta(days=days)
     mask = (df['timestamp'] >= start_dt) & (df['timestamp'] < end_dt)
     df_p = df.loc[mask]
@@ -308,8 +315,8 @@ def plot_time_series(df, dirs, zone, target, start_date=None, days=7):
     plt.plot(df_p['timestamp'], df_p['ebm_pred'], label='EBM')
     plt.plot(df_p['timestamp'], df_p['predicted'], label='Stacked')
     # Plot XGBoost and Naive predictions if available
-    if 'xgb_pred' in df_p.columns:
-        plt.plot(df_p['timestamp'], df_p['xgb_pred'], label='XGBoost')
+    if 'standalone_xgb_pred' in df_p.columns:
+        plt.plot(df_p['timestamp'], df_p['standalone_xgb_pred'], label='XGBoost')
     if 'naive_pred' in df_p.columns:
         plt.plot(df_p['timestamp'], df_p['naive_pred'], label='Naive')
     plt.legend()
@@ -410,7 +417,7 @@ def main():
         df_pred = df_pred.merge(
             df_xgb[['timestamp', 'predicted']], on='timestamp', how='left', suffixes=('', '_xgb')
         )
-        df_pred.rename(columns={'predicted_xgb': 'xgb_pred'}, inplace=True)
+        df_pred.rename(columns={'predicted_xgb': 'standalone_xgb_pred'}, inplace=True)
     else:
         print(f"Warning: XGBoost predictions file not found: {xgb_preds_path}")
     naive_preds_path = preds_path.replace('_predictions.csv', '_naive_predictions.csv')
@@ -426,9 +433,9 @@ def main():
     plot_stacked_meta_importance(stacked_meta, dirs, representative_zone, representative_target)
     # Time-series example and residuals
     if val_or_test == TEST:
-        df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target, start_date="2024-07-01", days=31)
-        df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target, start_date="2025-10-01", days=31)
-        df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target, start_date="2025-01-01", days=31)
+        df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target, start_date="2024-07-10", days=15)
+        df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target, start_date="2024-10-01", days=15)
+        df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target, start_date="2025-01-01", days=15)
         df_period = plot_time_series(df_pred, dirs, representative_zone, representative_target, start_date="2025-03-01", days=15)
 
 
