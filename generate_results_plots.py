@@ -8,6 +8,42 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import joblib
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+import sys
+
+def make_table(df: pd.DataFrame, direction: str, model_order, model_names, areas) -> str:
+    """Generate LaTeX code for one table (direction='up' or 'down')."""
+    sub = df[df['direction'] == direction]
+    lines = []
+    lines.append(r"\\begin{table}")
+    lines.append(r"\\centering")
+    lines.append(f"\\caption{{Detailed Metrics {direction.capitalize()} Test}}")
+    lines.append(f"\\label{{tab:metrics_{direction}_test}}")
+    lines.append(r"\\begin{tabular}{|l|rrr|rrr|rrr|rrr|}")
+    lines.append(r"\\toprule")
+    # Header with model groupings
+    header = " Model"
+    for m in model_order:
+        header += f" & \\multicolumn{{3}}{{c|}}{{{model_names[m]}}}"
+    header += r" \\\\"
+    lines.append(header)
+    # Metric names row
+    metric_row = "Metric"
+    for _ in model_order:
+        metric_row += " & MAE & R2 & RMSE"
+    metric_row += r" \\\\"
+    lines.append(r"\\midrule")
+    lines.append(metric_row)
+    # Data rows
+    for area in areas:
+        row = [area]
+        for m in model_order:
+            r = sub[(sub['area'] == area) & (sub['model'] == m)].iloc[0]
+            row += [f"{r['mae']:.4f}", f"{r['r2']:.4f}", f"{r['rmse']:.4f}"]
+        lines.append("   " + " & ".join(row) + r" \\\\")
+    lines.append(r"\\bottomrule")
+    lines.append(r"\\end{tabular}")
+    lines.append(r"\\end{table}")
+    return "\n".join(lines)
 
 DATASET = None
 from interpret.glassbox import ExplainableBoostingRegressor
@@ -349,7 +385,7 @@ def main():
     representative_target = 'up'.lower()
     TEST = "test"
     VALIDATION = "validation"
-    val_or_test = VALIDATION
+    val_or_test = TEST
     # Set global dataset identifier for titles and filenames
     global DATASET
     DATASET = val_or_test
@@ -441,6 +477,30 @@ def main():
 
         #plot_ebm_residuals(df_period, dirs, representative_zone, representative_target)
     print('All plots and tables saved to', base)
+    try:
+        # Path to filtered metrics summary
+        filtered_csv = f'./results/predictions/{val_or_test}_filtered/filtered_metrics_summary.csv'
+        df_filt = pd.read_csv(filtered_csv)
+        # Configuration
+        model_order = ["naive", "xgb", "ebm", "stacked"]
+        model_names = {"naive": "naive", "xgb": "xgboost", "ebm": "ebm", "stacked": "stacked"}
+        # Areas sorted naturally (no1, no2, ...)
+        areas = sorted(df_filt['area'].unique(), key=lambda s: int(s.replace('no', '')))
+        # Build tables
+        output = ["\\begin{landscape}", ""]
+        output.append(make_table(df_filt, "up", model_order, model_names, areas))
+        output.append("")
+        output.append(make_table(df_filt, "down", model_order, model_names, areas))
+        output.append("")
+        output.append("\\end{landscape}")
+        latex_str = "\n".join(output)
+        # Save LaTeX to file
+        tex_out = os.path.join(base, 'filtered_metrics_tables.tex')
+        with open(tex_out, 'w') as f:
+            f.write(latex_str)
+        print(f'Wrote LaTeX filtered metrics tables to {tex_out}')
+    except Exception as e:
+        print(f'Error generating LaTeX tables: {e}', file=sys.stderr)
 
 if __name__ == '__main__':
     main()
