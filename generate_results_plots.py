@@ -18,16 +18,24 @@ def make_table(df: pd.DataFrame, direction: str, model_order, model_names, areas
     lines.append(r"\\centering")
     lines.append(f"\\caption{{Detailed Metrics {direction.capitalize()} Test}}")
     lines.append(f"\\label{{tab:metrics_{direction}_test}}")
-    lines.append(r"\\begin{tabular}{|l|rrr|rrr|rrr|rrr|}")
+    # Include extra model-agnostic columns and adjust column spec
+    extra_cols = ["n_original", "n_filtered", "pct_removed"]
+    # Column spec: area (l), extra columns (r x len(extra_cols)), then metrics for each model
+    col_spec = "|l|" + "r" * len(extra_cols) + "|" + "".join(["rrr|" for _ in model_order])
+    lines.append(f"\\begin{{tabular}}{{{col_spec}}}")
     lines.append(r"\\toprule")
-    # Header with model groupings
-    header = " Model"
+    # Header row: area and extra columns, then model groupings
+    header = "Area"
+    for col in extra_cols:
+        header += f" & {col}"
     for m in model_order:
         header += f" & \\multicolumn{{3}}{{c|}}{{{model_names[m]}}}"
     header += r" \\\\"
     lines.append(header)
-    # Metric names row
+    # Metric names row: blank for extra columns, then metrics for each model
     metric_row = "Metric"
+    for _ in extra_cols:
+        metric_row += " &"
     for _ in model_order:
         metric_row += " & MAE & R2 & RMSE"
     metric_row += r" \\\\"
@@ -35,7 +43,14 @@ def make_table(df: pd.DataFrame, direction: str, model_order, model_names, areas
     lines.append(metric_row)
     # Data rows
     for area in areas:
-        row = [area]
+        # get extra column values (same for all models for this area/direction)
+        extra = sub[sub['area'] == area].iloc[0]
+        row = [
+            area,
+            str(int(extra['n_original'])),
+            str(int(extra['n_filtered'])),
+            f"{extra['pct_removed']:.2f}"
+        ]
         for m in model_order:
             r = sub[(sub['area'] == area) & (sub['model'] == m)].iloc[0]
             row += [f"{r['mae']:.4f}", f"{r['r2']:.4f}", f"{r['rmse']:.4f}"]
