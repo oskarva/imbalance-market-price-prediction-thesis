@@ -396,9 +396,17 @@ def plot_ebm_residuals(df_p, dirs, zone, target):
     plt.close()
 
 def main():
+    areas = ['no1', 'no2', 'no3', 'no4', 'no5']
+    targets = ['up', 'down']
+    for area in areas:
+        for target in targets:
+            # Generate plots for each area and target
+            loop(area, target)
+
+def loop(representative_zone, representative_target):
     # Configurable representative case
-    representative_zone = 'NO1'.lower()
-    representative_target = 'up'.lower()
+    representative_zone = representative_zone.lower()
+    representative_target = representative_target.lower()
     TEST = "test"
     VALIDATION = "validation"
     val_or_test = TEST

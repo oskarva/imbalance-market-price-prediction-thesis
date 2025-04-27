@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 find_spot_matches.py
 
