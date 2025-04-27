@@ -10,6 +10,7 @@ import joblib
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import sys
 import matplotlib.dates as mdates
+from matplotlib.lines import Line2D
 
 def make_table(df: pd.DataFrame, direction: str, model_order, model_names, areas) -> str:
     """Generate LaTeX code for one table (direction='up' or 'down')."""
@@ -587,54 +588,74 @@ def loop(representative_zone, representative_target):
         N_days = 30
         start_ts = df_plot['timestamp'].min()
         df_plot = df_plot[df_plot['timestamp'] <= start_ts + pd.Timedelta(days=N_days)]
-        # Plot with styled lines and date formatting
-        fig, ax = plt.subplots(figsize=(12, 6))
-        styles = {
-            'actual': {'ls': '-',  'lw': 2},
-            'naive':  {'ls': '--', 'lw': 1},
-            'xgb':    {'ls': ':',  'lw': 1},
-            'ebm':    {'ls': '-', 'lw': 1},
-            'stacked':{'ls': '--',  'lw': 1}
-        }
-        for col in ['actual', 'naive', 'xgb', 'ebm', 'stacked']:
-            ax.plot(df_plot['timestamp'], df_plot[col], label=col.capitalize(),
-                    linestyle=styles[col]['ls'], linewidth=styles[col]['lw'])
+        # Facet by model (small multiples), no interpolation
+        # Facet by model (small multiples), no interpolation, share y-axis, include actuals, gridlines
+        models = ['Naive', 'XGBoost', 'EBM', 'Stacked']
+        pred_cols = ['naive', 'xgb', 'ebm', 'stacked']
         n_points = len(df_plot)
-        ax.set_title(f'Filtered Predictions (first {N_days} days; {n_points} points) ({representative_zone.upper()} {representative_target}, {DATASET})')
-        ax.set_xlabel('Time')
-        ax.set_ylabel('Value')
-        # Date formatting & rotation
-        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-        plt.xticks(rotation=45)
-        plt.legend()
-        # Compute metrics for the displayed period
-        metrics_lines = []
-        model_map = {
-            'Naive': 'naive',
-            'XGBoost': 'xgb',
-            'EBM': 'ebm',
-            'Stacked': 'stacked'
-        }
-        for name, col in model_map.items():
-            if col in df_plot.columns:
-                y_true = df_plot['actual']
-                y_pred = df_plot[col]
-                mae = mean_absolute_error(y_true, y_pred)
-                rmse = np.sqrt(mean_squared_error(y_true, y_pred))
-                r2 = r2_score(y_true, y_pred)
-                metrics_lines.append(f"{name}: MAE={mae:.3f}, RMSE={rmse:.3f}, R2={r2:.3f}")
-        if metrics_lines:
-            textstr = "\n".join(metrics_lines)
-            ax.text(0.02, 0.98, textstr, transform=ax.transAxes,
-                    fontsize=10, verticalalignment='top',
-                    bbox=dict(facecolor='white', alpha=0.5))
-        plt.tight_layout()
-        out_fname = f'filtered_time_series_{representative_zone}_{representative_target}_{DATASET}.png'
+        fig, axes = plt.subplots(
+            len(models), 1,
+            sharex=True, sharey=True,
+            figsize=(12, 9), constrained_layout=True
+        )
+        # Plot each model in its own row, with shared y-axis and gridlines
+        for ax, name, col in zip(axes, models, pred_cols):
+            # model predictions (orange, colorblind-friendly)
+            ax.scatter(
+                df_plot['timestamp'], df_plot[col],
+                s=6, alpha=0.6, color='#D55E00'
+            )
+            # faint reference to actual values (smaller and lighter)
+            ax.scatter(
+                df_plot['timestamp'], df_plot['actual'],
+                s=2, alpha=0.15, color='gray'
+            )
+            # compute error metrics for this model
+            y_true = df_plot['actual']
+            y_pred = df_plot[col]
+            mae = mean_absolute_error(y_true, y_pred)
+            rmse = (mean_squared_error(y_true, y_pred) ** 0.5)
+            r2 = r2_score(y_true, y_pred)
+            # annotate metrics
+            ax.text(
+                0.01, 0.95,
+                f'MAE={mae:.1f}\nRMSE={rmse:.1f}\nR²={r2:.2f}',
+                transform=ax.transAxes,
+                va='top', ha='left', fontsize='small',
+                bbox=dict(facecolor='white', alpha=0.6, edgecolor='none')
+            )
+            ax.set_ylabel(name)
+            # gridlines
+            ax.grid(axis='y', color='#ddd', linestyle='--', linewidth=0.5)
+            ax.grid(axis='x', color='#eee', linestyle='--', linewidth=0.3)
+        # global labels
+        axes[-1].set_xlabel('Time')
+        # refine x-axis ticks: one per week
+        for ax in axes:
+            ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
+        plt.setp(axes[-1].get_xticklabels(), rotation=30, ha='right')
+        axes[-1].set_xlabel('Time')
+        title = (
+            f'Per-Model Filtered Predictions vs Actuals ' \
+            f'(first {N_days} days; {n_points} pts) ' \
+            f'({representative_zone.upper()} {representative_target}, {DATASET})'
+        )
+        fig.suptitle(title)
+        # single legend for Actual marker
+        actual_handle = Line2D(
+            [0], [0], marker='o', color='gray', linestyle='None',
+            markersize=5, alpha=0.15
+        )
+        fig.legend(
+            handles=[actual_handle], labels=['Actual'], loc='upper right'
+        )
+        # Save facet plot
+        out_fname = f'filtered_facet_{representative_zone}_{representative_target}_{DATASET}.png'
         path_out = os.path.join(dirs['timeseries'], out_fname)
         fig.savefig(path_out)
         plt.close(fig)
-        print('Saved styled filtered time series plot to', path_out)
+        print('Saved facet filtered time series plot to', path_out)
         # Also generate equivalent time series plot for the full dataset over the same period
         df_ts = df_pred.copy()
         df_ts['timestamp'] = pd.to_datetime(df_ts['timestamp'])
