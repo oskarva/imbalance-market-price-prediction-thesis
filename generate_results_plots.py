@@ -585,7 +585,7 @@ def loop(representative_zone, representative_target):
         for m in ['xgb', 'ebm', 'stacked']:
             df_plot = df_plot.merge(dfs[m][['timestamp', m]], on='timestamp', how='inner')
         df_plot = df_plot.sort_values('timestamp')
-        N_days = 30
+        N_days = 60
         start_ts = df_plot['timestamp'].min()
         df_plot = df_plot[df_plot['timestamp'] <= start_ts + pd.Timedelta(days=N_days)]
         # Facet by model (small multiples), no interpolation
@@ -603,12 +603,12 @@ def loop(representative_zone, representative_target):
             # model predictions (orange, colorblind-friendly)
             ax.scatter(
                 df_plot['timestamp'], df_plot[col],
-                s=6, alpha=0.6, color='#D55E00'
+                s=4, alpha=0.6, color='#D55E00', marker='.',
             )
             # faint reference to actual values (smaller and lighter)
             ax.scatter(
                 df_plot['timestamp'], df_plot['actual'],
-                s=2, alpha=0.15, color='gray'
+                s=2, alpha=0.5, color='black', marker='.',
             )
             # compute error metrics for this model
             y_true = df_plot['actual']
@@ -644,8 +644,8 @@ def loop(representative_zone, representative_target):
         fig.suptitle(title)
         # single legend for Actual marker
         actual_handle = Line2D(
-            [0], [0], marker='o', color='gray', linestyle='None',
-            markersize=5, alpha=0.15
+            [0], [0], marker='.', color='black', linestyle='None',
+            markersize=5, alpha=0.5
         )
         fig.legend(
             handles=[actual_handle], labels=['Actual'], loc='upper right'
