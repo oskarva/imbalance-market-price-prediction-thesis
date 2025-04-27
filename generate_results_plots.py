@@ -362,19 +362,37 @@ def plot_time_series(df, dirs, zone, target, start_date=None, days=7):
     end_dt = start_dt + pd.Timedelta(days=days)
     mask = (df['timestamp'] >= start_dt) & (df['timestamp'] < end_dt)
     df_p = df.loc[mask]
-    plt.figure(figsize=(12, 6))
-    plt.plot(df_p['timestamp'], df_p['actual'], label='Actual')
-    plt.plot(df_p['timestamp'], df_p['ebm_pred'], label='EBM')
-    plt.plot(df_p['timestamp'], df_p['predicted'], label='Stacked')
-    # Plot XGBoost and Naive predictions if available
-    if 'standalone_xgb_pred' in df_p.columns:
-        plt.plot(df_p['timestamp'], df_p['standalone_xgb_pred'], label='XGBoost')
-    if 'naive_pred' in df_p.columns:
-        plt.plot(df_p['timestamp'], df_p['naive_pred'], label='Naive')
-    plt.legend()
-    plt.title(f'Actual vs Predictions ({zone} {target}, {DATASET})')
-    plt.xlabel('Time')
-    plt.ylabel('Value')
+    # Plot with styled lines and date formatting
+    fig, ax = plt.subplots(figsize=(12, 6))
+    styles = {
+        'actual':  {'ls': '-',  'lw': 2},
+        'naive':   {'ls': '--', 'lw': 1},
+        'xgb':     {'ls': ':',  'lw': 1},
+        'ebm':     {'ls': '-',  'lw': 1},
+        'stacked': {'ls': '--', 'lw': 1}
+    }
+    plot_order = [
+        ('actual', 'actual', 'Actual'),
+        ('naive_pred', 'naive', 'Naive'),
+        ('standalone_xgb_pred', 'xgb', 'XGBoost'),
+        ('ebm_pred', 'ebm', 'EBM'),
+        ('predicted', 'stacked', 'Stacked')
+    ]
+    for col_key, style_key, label in plot_order:
+        if col_key in df_p.columns:
+            ax.plot(
+                df_p['timestamp'], df_p[col_key], label=label,
+                linestyle=styles[style_key]['ls'],
+                linewidth=styles[style_key]['lw']
+            )
+    ax.set_title(f'Actual vs Predictions ({zone} {target}, {DATASET})')
+    ax.set_xlabel('Time')
+    ax.set_ylabel('Value')
+    # Date formatting & rotation
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    plt.xticks(rotation=45)
+    ax.legend()
     # Compute metrics for the plotted period
     metrics_lines = []
     model_map = {
@@ -393,16 +411,17 @@ def plot_time_series(df, dirs, zone, target, start_date=None, days=7):
             metrics_lines.append(f"{name}: MAE={mae:.3f}, RMSE={rmse:.3f}, R2={r2:.3f}")
     if metrics_lines:
         textstr = "\n".join(metrics_lines)
-        ax = plt.gca()
-        ax.text(0.02, 0.98, textstr, transform=ax.transAxes,
-                fontsize=10, verticalalignment='top',
-                bbox=dict(facecolor='white', alpha=0.5))
+        ax.text(
+            0.02, 0.98, textstr, transform=ax.transAxes,
+            fontsize=10, verticalalignment='top',
+            bbox=dict(facecolor='white', alpha=0.5)
+        )
     plt.tight_layout()
     # Include start date in filename to avoid overwriting
     date_str = start_dt.strftime('%Y%m%d')
     filename = f'time_series_{zone}_{target}_{date_str}_{DATASET}.png'
-    plt.savefig(os.path.join(dirs['timeseries'], filename))
-    plt.close()
+    fig.savefig(os.path.join(dirs['timeseries'], filename))
+    plt.close(fig)
     return df_p
 
 def plot_ebm_residuals(df_p, dirs, zone, target):
