@@ -517,5 +517,43 @@ def main():
     except Exception as e:
         print(f'Error generating LaTeX tables: {e}', file=sys.stderr)
 
+    # Plot filtered predictions time series where spot price != target
+    try:
+        # Directory with filtered prediction CSVs
+        filtered_dir = f'./results/predictions/{val_or_test}_filtered'
+        # Load filtered predictions for each model
+        models_filtered = ['naive', 'xgb', 'ebm', 'stacked']
+        dfs = {}
+        for m in models_filtered:
+            fpath = os.path.join(filtered_dir, f"{representative_zone}_{representative_target}_{m}_filtered.csv")
+            df_m = pd.read_csv(fpath, parse_dates=['timestamp'])
+            # Keep timestamp, actual, and model prediction
+            df_m = df_m[['timestamp', 'actual', 'predicted']].rename(columns={'predicted': m})
+            dfs[m] = df_m
+        # Merge dataframes on timestamp, use naive as base (contains actual)
+        df_plot = dfs['naive'][['timestamp', 'actual', 'naive']].copy()
+        for m in ['xgb', 'ebm', 'stacked']:
+            df_plot = df_plot.merge(dfs[m][['timestamp', m]], on='timestamp', how='inner')
+        df_plot = df_plot.sort_values('timestamp')
+        # Plot lines for actual and each model
+        plt.figure(figsize=(12, 6))
+        plt.plot(df_plot['timestamp'], df_plot['actual'], label='Actual')
+        plt.plot(df_plot['timestamp'], df_plot['naive'], label='Naive')
+        plt.plot(df_plot['timestamp'], df_plot['xgb'], label='XGBoost')
+        plt.plot(df_plot['timestamp'], df_plot['ebm'], label='EBM')
+        plt.plot(df_plot['timestamp'], df_plot['stacked'], label='Stacked')
+        plt.legend()
+        plt.title(f'Filtered Predictions Time Series ({representative_zone} {representative_target}, {DATASET})')
+        plt.xlabel('Time')
+        plt.ylabel('Value')
+        plt.tight_layout()
+        out_fname = f'filtered_time_series_{representative_zone}_{representative_target}_{DATASET}.png'
+        path_out = os.path.join(dirs['timeseries'], out_fname)
+        plt.savefig(path_out)
+        plt.close()
+        print('Saved filtered time series plot to', path_out)
+    except Exception as e:
+        print(f'Error plotting filtered time series: {e}', file=sys.stderr)
+
 if __name__ == '__main__':
     main()
