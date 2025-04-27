@@ -375,6 +375,28 @@ def plot_time_series(df, dirs, zone, target, start_date=None, days=7):
     plt.title(f'Actual vs Predictions ({zone} {target}, {DATASET})')
     plt.xlabel('Time')
     plt.ylabel('Value')
+    # Compute metrics for the plotted period
+    metrics_lines = []
+    model_map = {
+        'Stacked': 'predicted',
+        'EBM': 'ebm_pred',
+        'XGBoost': 'standalone_xgb_pred',
+        'Naive': 'naive_pred'
+    }
+    for name, col in model_map.items():
+        if col in df_p.columns:
+            y_true = df_p['actual']
+            y_pred = df_p[col]
+            mae = mean_absolute_error(y_true, y_pred)
+            rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+            r2 = r2_score(y_true, y_pred)
+            metrics_lines.append(f"{name}: MAE={mae:.3f}, RMSE={rmse:.3f}, R2={r2:.3f}")
+    if metrics_lines:
+        textstr = "\n".join(metrics_lines)
+        ax = plt.gca()
+        ax.text(0.02, 0.98, textstr, transform=ax.transAxes,
+                fontsize=10, verticalalignment='top',
+                bbox=dict(facecolor='white', alpha=0.5))
     plt.tight_layout()
     # Include start date in filename to avoid overwriting
     date_str = start_dt.strftime('%Y%m%d')
@@ -565,12 +587,39 @@ def loop(representative_zone, representative_target):
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
         plt.xticks(rotation=45)
         plt.legend()
+        # Compute metrics for the displayed period
+        metrics_lines = []
+        model_map = {
+            'Naive': 'naive',
+            'XGBoost': 'xgb',
+            'EBM': 'ebm',
+            'Stacked': 'stacked'
+        }
+        for name, col in model_map.items():
+            if col in df_plot.columns:
+                y_true = df_plot['actual']
+                y_pred = df_plot[col]
+                mae = mean_absolute_error(y_true, y_pred)
+                rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+                r2 = r2_score(y_true, y_pred)
+                metrics_lines.append(f"{name}: MAE={mae:.3f}, RMSE={rmse:.3f}, R2={r2:.3f}")
+        if metrics_lines:
+            textstr = "\n".join(metrics_lines)
+            ax.text(0.02, 0.98, textstr, transform=ax.transAxes,
+                    fontsize=10, verticalalignment='top',
+                    bbox=dict(facecolor='white', alpha=0.5))
         plt.tight_layout()
         out_fname = f'filtered_time_series_{representative_zone}_{representative_target}_{DATASET}.png'
         path_out = os.path.join(dirs['timeseries'], out_fname)
         fig.savefig(path_out)
         plt.close(fig)
         print('Saved styled filtered time series plot to', path_out)
+        # Also generate equivalent time series plot for the full dataset over the same period
+        df_ts = df_pred.copy()
+        df_ts['timestamp'] = pd.to_datetime(df_ts['timestamp'])
+        # Plot using the same start and duration on full data
+        plot_time_series(df_ts, dirs, representative_zone, representative_target,
+                         start_date=start_ts, days=N_days)
     except Exception as e:
         print(f'Error plotting filtered time series: {e}', file=sys.stderr)
 
