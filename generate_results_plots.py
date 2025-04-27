@@ -385,7 +385,8 @@ def plot_time_series(df, dirs, zone, target, start_date=None, days=7):
                 linestyle=styles[style_key]['ls'],
                 linewidth=styles[style_key]['lw']
             )
-    ax.set_title(f'Actual vs Predictions ({zone} {target}, {DATASET})')
+    n_points = len(df_p)
+    ax.set_title(f'Actual vs Predictions ({zone} {target}, {DATASET}; {n_points} points)')
     ax.set_xlabel('Time')
     ax.set_ylabel('Value')
     # Date formatting & rotation
@@ -598,7 +599,8 @@ def loop(representative_zone, representative_target):
         for col in ['actual', 'naive', 'xgb', 'ebm', 'stacked']:
             ax.plot(df_plot['timestamp'], df_plot[col], label=col.capitalize(),
                     linestyle=styles[col]['ls'], linewidth=styles[col]['lw'])
-        ax.set_title(f'Filtered Predictions (first {N_days} days) ({representative_zone.upper()} {representative_target}, {DATASET})')
+        n_points = len(df_plot)
+        ax.set_title(f'Filtered Predictions (first {N_days} days; {n_points} points) ({representative_zone.upper()} {representative_target}, {DATASET})')
         ax.set_xlabel('Time')
         ax.set_ylabel('Value')
         # Date formatting & rotation
