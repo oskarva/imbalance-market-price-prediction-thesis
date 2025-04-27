@@ -9,6 +9,7 @@ import seaborn as sns
 import joblib
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import sys
+import matplotlib.dates as mdates
 
 def make_table(df: pd.DataFrame, direction: str, model_order, model_names, areas) -> str:
     """Generate LaTeX code for one table (direction='up' or 'down')."""
@@ -517,41 +518,51 @@ def main():
     except Exception as e:
         print(f'Error generating LaTeX tables: {e}', file=sys.stderr)
 
-    # Plot filtered predictions time series where spot price != target
+    # Plot filtered predictions time series where spot price != target (limited window & styled lines)
     try:
-        # Directory with filtered prediction CSVs
+        # Load filtered prediction CSVs for each model
         filtered_dir = f'./results/predictions/{val_or_test}_filtered'
-        # Load filtered predictions for each model
         models_filtered = ['naive', 'xgb', 'ebm', 'stacked']
         dfs = {}
         for m in models_filtered:
             fpath = os.path.join(filtered_dir, f"{representative_zone}_{representative_target}_{m}_filtered.csv")
             df_m = pd.read_csv(fpath, parse_dates=['timestamp'])
-            # Keep timestamp, actual, and model prediction
             df_m = df_m[['timestamp', 'actual', 'predicted']].rename(columns={'predicted': m})
             dfs[m] = df_m
-        # Merge dataframes on timestamp, use naive as base (contains actual)
+        # Merge on timestamp (naive carries actual)
         df_plot = dfs['naive'][['timestamp', 'actual', 'naive']].copy()
         for m in ['xgb', 'ebm', 'stacked']:
             df_plot = df_plot.merge(dfs[m][['timestamp', m]], on='timestamp', how='inner')
         df_plot = df_plot.sort_values('timestamp')
-        # Plot lines for actual and each model
-        plt.figure(figsize=(12, 6))
-        plt.plot(df_plot['timestamp'], df_plot['actual'], label='Actual')
-        plt.plot(df_plot['timestamp'], df_plot['naive'], label='Naive')
-        plt.plot(df_plot['timestamp'], df_plot['xgb'], label='XGBoost')
-        plt.plot(df_plot['timestamp'], df_plot['ebm'], label='EBM')
-        plt.plot(df_plot['timestamp'], df_plot['stacked'], label='Stacked')
+        N_days = 30
+        start_ts = df_plot['timestamp'].min()
+        df_plot = df_plot[df_plot['timestamp'] <= start_ts + pd.Timedelta(days=N_days)]
+        # Plot with styled lines and date formatting
+        fig, ax = plt.subplots(figsize=(12, 6))
+        styles = {
+            'actual': {'ls': '-',  'lw': 2},
+            'naive':  {'ls': '--', 'lw': 1},
+            'xgb':    {'ls': ':',  'lw': 1},
+            'ebm':    {'ls': '-', 'lw': 1},
+            'stacked':{'ls': '--',  'lw': 1}
+        }
+        for col in ['actual', 'naive', 'xgb', 'ebm', 'stacked']:
+            ax.plot(df_plot['timestamp'], df_plot[col], label=col.capitalize(),
+                    linestyle=styles[col]['ls'], linewidth=styles[col]['lw'])
+        ax.set_title(f'Filtered Predictions (first {N_days} days) ({representative_zone.upper()} {representative_target}, {DATASET})')
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Value')
+        # Date formatting & rotation
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        plt.xticks(rotation=45)
         plt.legend()
-        plt.title(f'Filtered Predictions Time Series ({representative_zone} {representative_target}, {DATASET})')
-        plt.xlabel('Time')
-        plt.ylabel('Value')
         plt.tight_layout()
         out_fname = f'filtered_time_series_{representative_zone}_{representative_target}_{DATASET}.png'
         path_out = os.path.join(dirs['timeseries'], out_fname)
-        plt.savefig(path_out)
-        plt.close()
-        print('Saved filtered time series plot to', path_out)
+        fig.savefig(path_out)
+        plt.close(fig)
+        print('Saved styled filtered time series plot to', path_out)
     except Exception as e:
         print(f'Error plotting filtered time series: {e}', file=sys.stderr)
 
