@@ -645,7 +645,7 @@ def loop(representative_zone, representative_target):
         # single legend for Actual marker
         actual_handle = Line2D(
             [0], [0], marker='.', color='black', linestyle='None',
-            markersize=5, alpha=0.5
+            markersize=5, alpha=1.0
         )
         fig.legend(
             handles=[actual_handle], labels=['Actual'], loc='upper right'
