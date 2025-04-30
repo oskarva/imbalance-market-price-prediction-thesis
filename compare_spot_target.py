@@ -4,7 +4,6 @@ Compare feature distributions when spot price matches regulation vs deviates.
 import os
 import re
 import sys
-import argparse
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
