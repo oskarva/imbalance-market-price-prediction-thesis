@@ -11,6 +11,11 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import sys
 import matplotlib.dates as mdates
 from matplotlib.lines import Line2D
+import re
+
+# Helper to sanitize filenames
+def sanitize_filename(s):
+    return re.sub(r'[^A-Za-z0-9]+', '_', s).strip('_')
 
 def make_table(df: pd.DataFrame, direction: str, model_order, model_names, areas) -> str:
     """Generate LaTeX code for one table (direction='up' or 'down')."""
@@ -441,10 +446,94 @@ def plot_ebm_residuals(df_p, dirs, zone, target):
 def main():
     areas = ['no1', 'no2', 'no3', 'no4', 'no5']
     targets = ['up', 'down']
+    # Generate per-area plots
     for area in areas:
         for target in targets:
-            # Generate plots for each area and target
             loop(area, target)
+    # After individual plots, generate master shape functions per feature across zones
+    # Using EBM models for 'test' dataset
+    # Use dataset flag set during loops (should be 'test')
+    val_or_test = DATASET
+    # Prepare master output directory
+    master_dir = os.path.join('chapters', val_or_test, 'plots', 'master_shapes')
+    os.makedirs(master_dir, exist_ok=True)
+    # Features to plot (univariate) based on first area's EBM explain data
+    # Define feature templates to match term names: one per area
+    feature_templates = []
+    # Obtain feature names from first area EBM
+    first_zone = areas[0]
+    first_target = targets[0]
+    try:
+        ebm0 = joblib.load(f'./models/{val_or_test}/ebm_last_run_{first_zone}_{first_target}.joblib')
+        exp0 = ebm0.explain_global().data()
+        term_features0 = ebm0.term_features_
+        # Identify all univariate terms
+        for idx, features_idx in enumerate(term_features0):
+            if len(features_idx) == 1:
+                fname = exp0['names'][idx]
+                # template: replace zone code with placeholder
+                tmpl = re.sub(r'\b' + first_zone + r'\b', '{zone}', fname)
+                feature_templates.append(tmpl)
+    except Exception:
+        feature_templates = []
+    # Remove duplicates
+    feature_templates = list(dict.fromkeys(feature_templates))
+    # Create master plots
+    for target in targets:
+        for tmpl in feature_templates:
+            # Determine which zones have this feature (exclude no5 for wind)
+            tmpl_l = tmpl.lower()
+            if 'wnd' in tmpl_l:
+                zones_for = [z for z in areas if z.lower() != 'no5']
+            else:
+                zones_for = areas
+            n = len(zones_for)
+            if n == 0:
+                continue
+            cols = int(np.ceil(np.sqrt(n)))
+            rows = int(np.ceil(n / cols))
+            fig, axes = plt.subplots(rows, cols, figsize=(cols*4, rows*3), squeeze=False)
+            # Loop through zones_for this feature
+            for i, zone in enumerate(zones_for):
+                ax = axes[i//cols][i%cols]
+                try:
+                    ebm = joblib.load(f'./models/{val_or_test}/ebm_last_run_{zone}_{target}.joblib')
+                    exp = ebm.explain_global().data()
+                    names = exp['names']
+                    scores = exp['scores']
+                    # retrieve term_features and bins
+                    bins = getattr(ebm, 'feature_bins_', getattr(ebm, 'bins_', None))
+                    term_scores = ebm.term_scores_
+                    term_features = ebm.term_features_
+                    feat_name = tmpl.format(zone=zone)
+                    if feat_name in names:
+                        idx = names.index(feat_name)
+                        feat_idx = term_features[idx][0]
+                        edges = np.asarray(bins[feat_idx])
+                        if edges.ndim > 1:
+                            edges = edges.flatten()
+                        mids = (edges[:-1] + edges[1:]) / 2
+                        ys = np.asarray(term_scores[idx])
+                        L = min(len(mids), len(ys))
+                        ax.plot(mids[:L], ys[:L], marker='o')
+                        ax.set_title(f"{zone.upper()} {feat_name}")
+                    else:
+                        ax.text(0.5, 0.5, 'N/A', ha='center', va='center')
+                        ax.set_title(f"{zone.upper()} {tmpl}")
+                except Exception as e:
+                    ax.text(0.5, 0.5, 'Error', ha='center', va='center')
+                    ax.set_title(zone.upper())
+                ax.set_xlabel(tmpl.format(zone=''))
+                ax.set_ylabel('f(x)')
+            # Remove unused axes
+            for j in range(n, rows*cols):
+                fig.delaxes(axes[j//cols][j%cols])
+            fig.suptitle(f"Master EBM Shape Functions for {tmpl.replace('{zone}','')} ({target})")
+            fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+            outname = f"master_shape_{sanitize_filename(tmpl.replace('{zone}',''))}_{target}_{val_or_test}.png"
+            # Save master shape plot
+            fig.savefig(os.path.join(master_dir, outname))
+            plt.close(fig)
 
 def loop(representative_zone, representative_target):
     # Configurable representative case

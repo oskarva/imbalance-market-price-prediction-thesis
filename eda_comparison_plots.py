@@ -114,7 +114,7 @@ def plot_within_zone_deviation(df, zone, tolerance, output_dir):
         order = ['Match Up', 'Match Down', 'Up Deviation', 'Down Deviation']
         # Box plot
         plt.figure(figsize=(8, 6))
-        sns.boxplot(data=sub, x='deviation_state', y=feat, order=order)
+        sns.boxplot(data=sub, x='deviation_state', y=feat, order=order, whis=(5, 95))
         plt.title(f"Distribution of {zone.upper()} {feat} by Deviation State")
         plt.xlabel('Deviation State')
         plt.ylabel(feat)
@@ -147,7 +147,7 @@ def plot_within_zone_deviation(df, zone, tolerance, output_dir):
             if not match_df.empty:
                 plt.figure(figsize=(6, 6))
                 sns.boxplot(data=match_df, x='deviation_state', y=feat,
-                            order=['Match Up', 'Match Down'], palette='Set2')
+                            order=['Match Up', 'Match Down'], palette='Set2', whis=(5, 95))
                 plt.title(f"Distribution of {zone.upper()} {feat} Outside Deviations")
                 plt.xlabel('Match State')
                 plt.ylabel(feat)
@@ -225,6 +225,69 @@ def plot_cross_zone_comparison(zone_dfs, feature_template, zones, deviation_type
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, fname))
     plt.close()
+
+def plot_target_distribution(zone_dfs, output_dir):
+    """
+    Plot boxplots (with jitter) of up- and down-regulation prices across zones.
+    Saves two figures: Up_Price_by_Zone_boxplot.png and Down_Price_by_Zone_boxplot.png
+    """
+    ensure_dir(output_dir)
+    # Up price distribution
+    up_records = []
+    for zone, df in zone_dfs.items():
+        col = f"pri {zone} regulation up €/mwh cet min15 a"
+        if col not in df.columns:
+            continue
+        tmp = df[[col]].dropna().copy()
+        tmp.rename(columns={col: 'price'}, inplace=True)
+        tmp['Zone'] = zone.upper()
+        up_records.append(tmp)
+    if up_records:
+        up_df = pd.concat(up_records, ignore_index=True)
+        # Winsorize to 5th–95th percentile
+        p5, p95 = up_df['price'].quantile([0.05, 0.95])
+        up_df['price_capped'] = up_df['price'].clip(lower=p5, upper=p95)
+        plt.figure(figsize=(8, 6))
+        # Violin plot scaled by count, inner quartiles
+        sns.violinplot(
+            data=up_df, x='Zone', y='price_capped',
+            inner='quartile', scale='count', palette='Set3'
+        )
+        # Overlay low-opacity strip plot
+        plt.title('Up-Regulation Price Distribution by Zone')
+        plt.xlabel('Price Zone')
+        plt.ylabel('Up Price (capped 5th–95th pct)')
+        fup = os.path.join(output_dir, 'Up_Price_by_Zone_boxplot.png')
+        plt.tight_layout()
+        plt.savefig(fup)
+        plt.close()
+    # Down price distribution
+    down_records = []
+    for zone, df in zone_dfs.items():
+        col = f"pri {zone} regulation down €/mwh cet min15 a"
+        if col not in df.columns:
+            continue
+        tmp = df[[col]].dropna().copy()
+        tmp.rename(columns={col: 'price'}, inplace=True)
+        tmp['Zone'] = zone.upper()
+        down_records.append(tmp)
+    if down_records:
+        down_df = pd.concat(down_records, ignore_index=True)
+        # Winsorize to 5th–95th percentile
+        p5d, p95d = down_df['price'].quantile([0.05, 0.95])
+        down_df['price_capped'] = down_df['price'].clip(lower=p5d, upper=p95d)
+        plt.figure(figsize=(8, 6))
+        sns.violinplot(
+            data=down_df, x='Zone', y='price_capped',
+            inner='quartile', scale='count', palette='Set3'
+        )
+        plt.title('Down-Regulation Price Distribution by Zone')
+        plt.xlabel('Price Zone')
+        plt.ylabel('Down Price (capped 5th–95th pct)')
+        fdn = os.path.join(output_dir, 'Down_Price_by_Zone_boxplot.png')
+        plt.tight_layout()
+        plt.savefig(fdn)
+        plt.close()
 
 def main():
     parser = argparse.ArgumentParser(
@@ -319,7 +382,7 @@ def main():
         tolerance=tol,
         output_dir=output_folder
     )
-    # Case C: RDL during Up-Regulation Deviations across NO1, NO2, NO4, NO5
+    # Case C: RDL during Up-Regulation Deviations across zones
     plot_cross_zone_comparison(
         zone_dfs,
         feature_template="rdl {zone} mwh/h cet min15 a",
@@ -328,6 +391,81 @@ def main():
         tolerance=tol,
         output_dir=output_folder
     )
+    # Plot target distributions across zones (up & down prices)
+    plot_target_distribution(zone_dfs, output_folder)
+    # Plot match vs deviation distributions per feature in a 2x2 grid (up/down × match/dev)
+    features = [
+        ('spot',     'pri {zone} spot €/mwh cet h a'),
+        ('rdl',      'rdl {zone} mwh/h cet min15 a'),
+        ('intraday','con {zone} intraday mwh/h cet h a'),
+        ('hydro',    'pro {zone} hydro tot mwh/h cet h af'),
+        ('wind',     'pro {zone} wnd mwh/h cet min15 a'),
+        ('cooling',  'con {zone} cooling % cet min15 s'),
+        ('heating',  'con {zone} heating % cet min15 s'),
+    ]
+    for key, templ in features:
+        # Prepare DataFrames for each quadrant
+        mats = {}
+        for direction in ['up', 'down']:
+            # match
+            recs = []
+            for zone, df in zone_dfs.items():
+                feat_col = templ.format(zone=zone)
+                if feat_col not in df.columns:
+                    continue
+                spot_col = f"pri {zone} spot €/mwh cet h a"
+                tgt_col = f"pri {zone} regulation {direction} €/mwh cet min15 a"
+                mask = np.isclose(df[tgt_col], df[spot_col], atol=tol)
+                tmp = df.loc[mask, [feat_col]].dropna().copy()
+                tmp.columns = ['Value']
+                tmp['Zone'] = zone.upper()
+                recs.append(tmp)
+            mats[f"{direction}_match"] = pd.concat(recs, ignore_index=True) if recs else None
+            # deviation
+            recs = []
+            for zone, df in zone_dfs.items():
+                feat_col = templ.format(zone=zone)
+                if feat_col not in df.columns:
+                    continue
+                spot_col = f"pri {zone} spot €/mwh cet h a"
+                tgt_col = f"pri {zone} regulation {direction} €/mwh cet min15 a"
+                mask = ~np.isclose(df[tgt_col], df[spot_col], atol=tol)
+                tmp = df.loc[mask, [feat_col]].dropna().copy()
+                tmp.columns = ['Value']
+                tmp['Zone'] = zone.upper()
+                recs.append(tmp)
+            mats[f"{direction}_dev"] = pd.concat(recs, ignore_index=True) if recs else None
+        # Build 2x2 grid
+        fig, axes = plt.subplots(2, 2, figsize=(14, 12), sharey=True)
+        labels = [('up_match', f"Up Match: {key}"),
+                  ('up_dev',   f"Up Deviation: {key}"),
+                  ('down_match', f"Down Match: {key}"),
+                  ('down_dev',   f"Down Deviation: {key}")]
+        for idx, (k, title) in enumerate(labels):
+            ax = axes[idx//2][idx%2]
+            dfq = mats.get(k)
+            if dfq is not None and not dfq.empty:
+                # Violin plot for distribution
+                sns.violinplot(
+                    data=dfq, x='Zone', y='Value',
+                    inner='quartile', scale='count', palette='Set3', ax=ax
+                )
+                ax.set_title(title)
+                ax.set_xlabel('')
+            else:
+                ax.text(0.5, 0.5, 'No data', ha='center', va='center')
+                ax.set_title(title)
+                ax.set_xticks([])
+            # Y-label only on left column
+            if idx % 2 == 0:
+                ax.set_ylabel(key)
+            else:
+                ax.set_ylabel('')
+        fig.suptitle(f"{key.upper()} Distributions: Match vs Deviation by Zone")
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        fname = f"{key}_match_dev_2x2_boxplot.png"
+        plt.savefig(os.path.join(output_folder, fname))
+        plt.close(fig)
 
 if __name__ == '__main__':
     main()
