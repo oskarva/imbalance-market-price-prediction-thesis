@@ -466,6 +466,69 @@ def main():
         fname = f"{key}_match_dev_2x2_boxplot.png"
         plt.savefig(os.path.join(output_folder, fname))
         plt.close(fig)
+    # --- 2x2 Match vs Deviation for target prices across zones ---
+    # Construct mats for target up/down
+    mats = {}
+    for direction in ['up', 'down']:
+        # match
+        recs = []
+        for zone, df in zone_dfs.items():
+            up_col = f"pri {zone} regulation up €/mwh cet min15 a"
+            down_col = f"pri {zone} regulation down €/mwh cet min15 a"
+            spot_col = f"pri {zone} spot €/mwh cet h a"
+            tgt_col = up_col if direction == 'up' else down_col
+            if tgt_col not in df.columns:
+                continue
+            mask = np.isclose(df[tgt_col], df[spot_col], atol=tol)
+            tmp = df.loc[mask, [tgt_col]].rename(columns={tgt_col: 'Price'}).dropna().copy()
+            tmp['Zone'] = zone.upper()
+            recs.append(tmp)
+        mats[f"{direction}_match"] = pd.concat(recs, ignore_index=True) if recs else None
+        # deviation
+        recs = []
+        for zone, df in zone_dfs.items():
+            up_col = f"pri {zone} regulation up €/mwh cet min15 a"
+            down_col = f"pri {zone} regulation down €/mwh cet min15 a"
+            spot_col = f"pri {zone} spot €/mwh cet h a"
+            tgt_col = up_col if direction == 'up' else down_col
+            if tgt_col not in df.columns:
+                continue
+            mask = ~np.isclose(df[tgt_col], df[spot_col], atol=tol)
+            tmp = df.loc[mask, [tgt_col]].rename(columns={tgt_col: 'Price'}).dropna().copy()
+            tmp['Zone'] = zone.upper()
+            recs.append(tmp)
+        mats[f"{direction}_dev"] = pd.concat(recs, ignore_index=True) if recs else None
+    # Plot 2x2 grid of target prices (each subplot its own Y-axis)
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12), sharey=False)
+    labels = [
+        ('up_match',   'Up Match'),
+        ('up_dev',     'Up Deviation'),
+        ('down_match', 'Down Match'),
+        ('down_dev',   'Down Deviation')
+    ]
+    for idx, (k, title) in enumerate(labels):
+        ax = axes[idx//2][idx%2]
+        dfq = mats.get(k)
+        if dfq is not None and not dfq.empty:
+            sns.violinplot(
+                data=dfq, x='Zone', y='Price',
+                inner='quartile', scale='count', palette='Set2', ax=ax
+            )
+            ax.set_title(title)
+            ax.set_xlabel('')
+        else:
+            ax.text(0.5, 0.5, 'No data', ha='center', va='center')
+            ax.set_title(title)
+            ax.set_xticks([])
+        if idx % 2 == 0:
+            ax.set_ylabel('Price (€/MWh)')
+        else:
+            ax.set_ylabel('')
+    fig.suptitle('Target Price Match vs Deviation by Zone')
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    fname = 'target_match_dev_2x2_boxplot.png'
+    plt.savefig(os.path.join(output_folder, fname))
+    plt.close(fig)
 
 if __name__ == '__main__':
     main()
