@@ -45,7 +45,6 @@ The Norwegian Imbalance Energy Market handles real-time discrepancies between el
 Key characteristics:  
 - Five price zones: NO1, NO2, NO3, NO4, NO5.  
 - High volatility and regime changes, especially during price deviations from the day-ahead spot.  
-- Crucial for market participants and system operators to manage balancing costs.
 
 ## Methodology
 
@@ -75,7 +74,7 @@ The most important files with regards to implementation details of the models ar
 - The EBM achieves predictive accuracy on par with XGBoost across most zones, enabling interpretability with negligible performance loss.  
 - The residual-based stacked model yields marginal improvements, suggesting alternative stacking strategies (e.g., classification-then-regression) may be more effective.  
 - Forecasting periods with activation price deviations from the day-ahead spot remains challenging; model performance drops when isolating these events.  
-- EBM shape functions reveal the dominant influence of the spot price and non-linear, region-specific effects of drivers such as hydropower output and residual load—particularly in NO3 and NO4.
+- EBM shape functions reveal the dominant influence of the spot price and non-linear, region-specific effects of drivers such as hydropower output and residual load, particularly in NO3 and NO4.
 
 ## Repository Contents
 
@@ -88,8 +87,8 @@ The most important files with regards to implementation details of the models ar
 ├── results/                    # Forecast results and evaluation metrics
 ├── src/                        # Python source code
 │   └── data/                   # Data loading & preprocessing utilities
-│   └── .                       # Scripts for training and testing models, investigating data and results, and creating plots  
-├── run_all_best_models.sh      # Bash script to run training & evaluation with best parameters
+│   └── .                       # Training and testing models, analyzing & plotting data and results  
+├── run_all_best_models.sh      # Bash script to run training & eval with best parameters
 ├── requirements.txt            # Python package dependencies
 └── README.md                   # This file
 ```
@@ -157,7 +156,7 @@ To find the parameter sets tried for the XGBoost residual model, go to `src/run_
 - Models struggle to predict activation price deviations from the day-ahead spot: Current features may not capture the underlying triggers.  
 - Hyperparameter tuning was limited to predefined search spaces; alternative strategies may yield improvements.  
 - The stacked ensemble shows minimal gains; other stacking or hybrid approaches warrant exploration.  
-- Reproducibility depends on access to the Volue Insight API and full data coverage (Jan 2021–Mar 2025).
+- Full reproducibility depends on access to the Volue Insight API.
 
 ## Citation
 
