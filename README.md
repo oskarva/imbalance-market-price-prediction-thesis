@@ -87,7 +87,7 @@ The most important files with regards to implementation details of the models ar
 ├── results/                    # Forecast results and evaluation metrics
 ├── src/                        # Python source code
 │   └── data/                   # Data loading & preprocessing utilities
-│   └── .                       # Training and testing models, analyzing & plotting data and results  
+│   └── .                       # Training and testing models, data analysis and plotting   
 ├── run_all_best_models.sh      # Bash script to run training & eval with best parameters
 ├── requirements.txt            # Python package dependencies
 └── README.md                   # This file
