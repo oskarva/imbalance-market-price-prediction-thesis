@@ -65,9 +65,9 @@ Key characteristics:
 
 ## Key files
 The most important files with regards to implementation details of the models are the following:
-   - Script that trains and tests the naïve baseline model using cross-validation: `python src/run_naive_cv_all_targets.py`  
-   - Script that trains and tests the XGBoost standalone model using cross-validation: `python src/run_cv_with_time_features.py`  
-   - Script that trains and tests the EBM and XGBoost stacked ensemble using cross-validation: `python src/run_cv_stacked_with_time_features.py`
+   - Script that trains and tests the naïve baseline model using cross-validation: `src/run_naive_cv_all_targets.py`  
+   - Script that trains and tests the XGBoost standalone model using cross-validation: `src/run_cv_with_time_features.py`  
+   - Script that trains and tests the EBM and XGBoost stacked ensemble using cross-validation: `src/run_cv_stacked_with_time_features.py`
 
 ## Key Findings and Insights
 
@@ -81,13 +81,14 @@ The most important files with regards to implementation details of the models ar
 
 ```
 .        
-├── chapters/                   # LaTeX source for thesis chapters
-├── models/                     # Serialized trained model files
-├── optimization_runs/          # Hyperparameter search logs and results
-├── plots/                      # Exploratory and results plots
+├── chapters/                   # Plots and tables
+├── models/                     # trained model files
+├── optimization_runs/          # Hyperparameter optimization results
+├── plots/                      # Plots from exploratory data analysis of NO1
 ├── results/                    # Forecast results and evaluation metrics
 ├── src/                        # Python source code
 │   └── data/                   # Data loading & preprocessing utilities
+│   └── .                       # Scripts for training and testing models, investigating data and results, and creating plots  
 ├── run_all_best_models.sh      # Bash script to run training & evaluation with best parameters
 ├── requirements.txt            # Python package dependencies
 └── README.md                   # This file
@@ -97,8 +98,7 @@ The most important files with regards to implementation details of the models ar
 
 **Prerequisites:**  
 - Python 3.9.6 (or later)  
-- Access to the Volue Insight API  
-- UNIX-like shell for running the provided `.sh` scripts
+- Access to the Volue Insight API (or another way to collect the data)
 
 **Installation:**  
 ```bash
@@ -141,8 +141,7 @@ Failure to configure this will prevent data collection via `src/collect_data.py`
 
 ## Outputs
 
-- **Results:** Stored under `results/`, organized by model type and area/index.  
-- **Plots:** Forecast vs. actual, EBM shape functions, performance comparisons in `plots/`.  
+- **Results:** Stored under `chapters/`, organized by dataset and then model type and area/index.  
 - **Metrics:** MAE, RMSE, and R² tables for each zone and model.
 
 ## Hyperparameters 
@@ -164,5 +163,4 @@ To find the parameter sets tried for the XGBoost residual model, go to `src/run_
 
 If you use this code or results, please cite:
 > Våle, O. (2025). mFRR Activation Price Forecasting for the Norwegian Imbalance Energy Market: Investigating the Tradeoff between Accuracy and Model Interpretability. Master’s Thesis, University of Oslo (UIO).  
->
 > GitHub: https://github.com/oskarva/imbalance-market-price-prediction-thesis
