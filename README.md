@@ -2,7 +2,8 @@
 
 This repository contains the Python code and experiments supporting the master’s thesis:
 “mFRR Activation Price Forecasting for the Norwegian Imbalance Energy Market: Investigating the Tradeoff between Accuracy and Model Interpretability”
-by Oskar Våle (2025).
+by Oskar Våle (2025). \
+**If you have any questions at all, feel free to reach out to me at oskar.vaale@gmail.com. Do not hesitate to fork this repo and make it your own:)**
 
 <!-- TOC -->
 - [Project Overview](#project-overview)
@@ -39,7 +40,7 @@ Accurately predict mFRR activation prices while ensuring high model interpretabi
 
 ## Problem Domain
 
-The Norwegian Imbalance Energy Market handles real-time discrepancies between electricity supply and demand using activation prices for manual frequency restoration reserves (mFRR). These prices are settled in the mFRR energy activation market based on a marginal pricing principle and come in upward (power deficit) and downward (power surplus) variants. Approximately one-third of activation prices equal the day-ahead spot price, but the remainder can deviate significantly, posing forecasting challenges.
+The Norwegian Imbalance Energy Market handles real-time discrepancies between electricity supply and demand using activation prices for manual frequency restoration reserves (mFRR). These prices are settled in the mFRR energy activation market based on a marginal pricing principle and come in upward (power deficit) and downward (power surplus) variants. A significant amount of the activation prices equal the day-ahead spot price, but the remainder can deviate significantly, posing forecasting challenges.
 
 Key characteristics:  
 - Five price zones: NO1, NO2, NO3, NO4, NO5.  
@@ -104,9 +105,11 @@ pip install -r requirements.txt
 **API Configuration:**  
 Set the `WAPI_CONFIG` environment variable to point to your Volue Insight API credentials file:
 ```bash
-export WAPI_CONFIG=/path/to/volue_api_config.json
+export WAPI_CONFIG=/path/to/volue_api_config.ini
 ```
-Failure to configure this will prevent data collection via `src/collect_data.py`.
+Failure to configure this will prevent data collection via `src/collect_data.py`. \
+*Important:* This repository **does not contain the raw dataset** used for the thesis, due to its size and proprietary nature. To reproduce the experiments or run the code on the original data period (Jan 2021–Mar 2025), you will need to fetch the data using `src/collect_data.py` with your own API access **OR** collect the data through other means, saving the data in a format compatible with the rest of my scripts. 
+
 
 ## Usage
 
@@ -146,7 +149,7 @@ To find the parameter sets tried for the XGBoost residual model, go to `src/run_
 
 ## Limitations
 
-- Models struggle to predict activation price deviations from the day-ahead spot—current features may not capture the underlying triggers.  
+- Models struggle to predict activation price deviations from the day-ahead spot: Current features may not capture the underlying triggers.  
 - Hyperparameter tuning was limited to predefined search spaces; alternative strategies may yield improvements.  
 - The stacked ensemble shows minimal gains; other stacking or hybrid approaches warrant exploration.  
 - Reproducibility depends on access to the Volue Insight API and full data coverage (Jan 2021–Mar 2025).
