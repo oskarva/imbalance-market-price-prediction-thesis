@@ -63,6 +63,12 @@ Key characteristics:
   - Metrics: MAE (Mean Absolute Error), RMSE (Root Mean Squared Error), R² (Coefficient of Determination)  
 - **Tools & Libraries:** Python 3.9.6; Pandas, NumPy, Scikit-learn, XGBoost, Interpret (EBM), Matplotlib, Joblib, Statsmodels, Tabulate.
 
+## Key files
+The most important files with regards to implementation details of the models are the following:
+   - Script that trains and tests the naïve baseline model using cross-validation: `python src/run_naive_cv_all_targets.py`  
+   - Script that trains and tests the XGBoost standalone model using cross-validation: `python src/run_cv_with_time_features.py`  
+   - Script that trains and tests the EBM and XGBoost stacked ensemble using cross-validation: `python src/run_cv_stacked_with_time_features.py`
+
 ## Key Findings and Insights
 
 - Both XGBoost and EBM outperform the naïve baseline by large margins, demonstrating the value of gradient-boosting approaches.  
@@ -130,7 +136,7 @@ Failure to configure this will prevent data collection via `src/collect_data.py`
    ```
 3. **Individual Scripts:**  
    - Naïve baseline: `python src/run_naive_cv_all_targets.py`  
-   - XGBoost & EBM CV: `python src/run_cv_with_time_features.py`  
+   - XGBoost CV: `python src/run_cv_with_time_features.py`  
    - Stacked ensemble: `python src/run_cv_stacked_with_time_features.py`
 
 ## Outputs
